@@ -115,6 +115,21 @@ Add a server to `.vscode/mcp.json`:
 
 See [VS Code's MCP configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration).
 
+### Cursor
+
+Add this to `.cursor/mcp.json` in your project (or `~/.cursor/mcp.json` for all projects):
+
+```json
+{
+  "mcpServers": {
+    "tasks": {
+      "command": "/absolute/path/to/tasks-mcp",
+      "env": {"TASKS_ROOT": "/absolute/path/to/your-project"}
+    }
+  }
+}
+```
+
 ### OpenCode
 
 Add this entry to `opencode.json`:

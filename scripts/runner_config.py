@@ -12,9 +12,31 @@ from pathlib import Path
 CONFIG_FILE = ".tasks-toolkit.json"
 RUNNER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
+# Always protected: version control, the tracker's own data and the config itself.
+# Project-specific paths (agent or tool config dirs) go in `protected_paths` in CONFIG_FILE.
+BUILTIN_PROTECTED = (".git", ".githooks", "tmp", "tasks/tasks.db", "tasks/.lock", CONFIG_FILE)
+
 
 class RunnerError(Exception):
     """Runner configuration or an execution prerequisite is invalid."""
+
+
+def protected_paths(root: Path) -> tuple[str, ...]:
+    """Built-in protected paths plus `protected_paths` from the project config, if present."""
+    path = root / CONFIG_FILE
+    extra: object = []
+    if path.is_file():
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            raise RunnerError("runner config must be an object")
+        extra = config.get("protected_paths", [])
+    if not isinstance(extra, list) or not all(isinstance(p, str) and p.strip("/") for p in extra):
+        raise RunnerError("protected_paths must be a list of repo-relative paths")
+    return BUILTIN_PROTECTED + tuple(p.strip("/") for p in extra)
+
+
+def is_protected(path: str, protected: tuple[str, ...]) -> bool:
+    return any(path == p or path.startswith(p + "/") for p in protected)
 
 
 def valid_runner_name(name: object) -> bool:
@@ -64,4 +86,5 @@ def load_config(root: Path) -> dict:
     timeout = config.get("timeout", 120)
     if type(timeout) is not int or timeout < 1:
         raise RunnerError("timeout must be a positive integer")
+    protected_paths(root)  # validates the optional protected_paths list
     return config

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sprint plan tooling for the Kilo planner agent.
+"""Sprint plan tooling for the planner agent.
 
   sprint_plan.py extract  <raw.txt> <plan.json>   pull the JSON plan out of the model's answer
   sprint_plan.py validate <plan.json> [--no-lint] [--specs-written] schema, flow rules and spec-lint; errors on stderr, exit 4
@@ -17,13 +17,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.runner_config import RunnerError, is_protected, protected_paths  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SPEC_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 CLEAN_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
-FORBIDDEN = (".git", ".githooks", ".claude", ".junie", ".kilo", "tmp", "kilo.json", ".mcp.json",
-             "tasks/tasks.db", "tasks/.lock")
 MAX_TASKS = 12
 
 
@@ -49,7 +50,7 @@ def extract_plan(text: str) -> dict:
     return plan
 
 
-def _path_problem(path: object) -> str | None:
+def _path_problem(path: object, protected: tuple[str, ...]) -> str | None:
     """Why a scope/path is not allowed, or None."""
     if not isinstance(path, str) or not path:
         return "must be a non-empty string"
@@ -57,9 +58,9 @@ def _path_problem(path: object) -> str | None:
         return "must be a clean repo-relative path ([A-Za-z0-9._/-], no '..')"
     if any(seg.startswith("-") or not seg for seg in path.split("/")):
         return "has an empty segment or one starting with '-'"
-    for bad in FORBIDDEN:
-        if path == bad or path.startswith(bad + "/"):
-            return f"touches the forbidden path {bad}"
+    for bad in protected:
+        if is_protected(path, (bad,)):
+            return f"touches the protected path {bad}"
     return None
 
 
@@ -67,6 +68,10 @@ def validate_plan(plan: dict, lint: bool = True, specs_written: bool = False) ->
     """Return every violation of the flow rules (empty list = valid).
 
     With specs_written (apply time) the spec files must already exist; otherwise (plan time) they must not."""
+    try:
+        protected = protected_paths(ROOT)
+    except RunnerError as exc:
+        return [str(exc)]
     errors: list[str] = []
     sprint = plan.get("sprint")
     if not isinstance(sprint, dict):
@@ -110,7 +115,7 @@ def validate_plan(plan: dict, lint: bool = True, specs_written: bool = False) ->
         if not isinstance(scope, list) or not scope:
             errors.append(f"{label}: at least one scope path is required")
         else:
-            errors += [f"{label}: scope '{p}' {why}" for p in scope if (why := _path_problem(p))]
+            errors += [f"{label}: scope '{p}' {why}" for p in scope if (why := _path_problem(p, protected))]
         deps = task.get("depends_on", [])
         if not isinstance(deps, list) or any(d not in seen_keys for d in deps):
             errors.append(f"{label}: depends_on must list earlier task keys")

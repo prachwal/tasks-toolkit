@@ -15,6 +15,7 @@ from scripts import sprint_auto_preflight as sap
 from scripts import sprint_auto_state as sas
 from scripts import tasks  # noqa: E402
 from scripts import tasks_plan_import as tpi
+from scripts.runner_config import RunnerError, is_protected, protected_paths  # noqa: E402
 from scripts.task_runner import scope_conformity as check_scope_conformity  # noqa: E402
 
 
@@ -118,6 +119,12 @@ def _prepare_run(root: Path, request: dict, answers: dict, run_name: str,
             result["message"] = "plan has no tasks"
             return result
 
+        try:
+            protected = protected_paths(root)
+        except RunnerError as exc:
+            result.update(status="invalid_plan", message=str(exc))
+            return result
+
         # Validate each task
         keys = set()
         for i, t in enumerate(tasks_list):
@@ -153,7 +160,7 @@ def _prepare_run(root: Path, request: dict, answers: dict, run_name: str,
                     result["status"] = "invalid_plan"
                     result["message"] = f"invalid scope: {scope!r}"
                     return result
-                if scope in ("tasks/tasks.db", "tasks/.lock", "kilo.json", ".mcp.json"):
+                if is_protected(scope, protected):
                     result["status"] = "invalid_plan"
                     result["message"] = f"forbidden scope: {scope!r}"
                     return result

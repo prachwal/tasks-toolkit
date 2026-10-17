@@ -21,7 +21,13 @@ from scripts.runner_config import (
     RunnerError as RunnerError,
 )
 from scripts.runner_config import (
+    is_protected as is_protected,
+)
+from scripts.runner_config import (
     load_config as load_config,
+)
+from scripts.runner_config import (
+    protected_paths as protected_paths,
 )
 from scripts.runner_config import (
     runner_command as runner_command,
@@ -92,7 +98,8 @@ def verify_changes(root: Path, base: str, scopes: list[str], config: dict) -> di
     """Inspect actual changes and run the checks captured before invoking the coder."""
     files = changed_files(root, base)
     ok, violations = scope_conformity(files, scopes)
-    forbidden = [f for f in files if f == CONFIG_FILE or f == ".git" or f.startswith(".git/")]
+    protected = protected_paths(root)
+    forbidden = [f for f in files if is_protected(f, protected)]
     if forbidden:
         ok = False
         violations += forbidden
