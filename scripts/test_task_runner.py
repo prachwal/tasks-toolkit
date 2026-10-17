@@ -45,7 +45,7 @@ class RepositoryCase(unittest.TestCase):
             "from pathlib import Path\nassert Path('src/result.txt').read_text() == 'verified'\n"
         )
         self.config = {"checks": [[sys.executable, "check.py"]],
-                       "runners": {"codex": [sys.executable, "coder.py"]}, "timeout": 10}
+                       "runners": {"local-worker": [sys.executable, "coder.py"]}, "timeout": 10}
         (self.root / runner.CONFIG_FILE).write_text(json.dumps(self.config))
         self.commit()
         self.base = runner.git(self.root, "rev-parse", "HEAD")
@@ -63,7 +63,7 @@ class RepositoryCase(unittest.TestCase):
         self.base = runner.git(self.root, "rev-parse", "HEAD")
 
     def execute(self):
-        return runner.execute_task(self.root, self.spec, "result", "codex", ["src/"], self.config)
+        return runner.execute_task(self.root, self.spec, "result", "local-worker", ["src/"], self.config)
 
 
 class RunnerTests(RepositoryCase):
@@ -150,7 +150,63 @@ class RunnerTests(RepositoryCase):
         stats = run_stats.load_runs(self.root / "tmp/runs")
         self.assertEqual(len(stats), 1)
         self.assertEqual(stats[0]["verdict"], "verified")
-        self.assertEqual(stats[0]["runner"], "codex")
+        self.assertEqual(stats[0]["runner"], "local-worker")
+
+    def run_cli(self, *args):
+        return subprocess.run(
+            [sys.executable, str(Path(runner.__file__)), "result", "--root", str(self.root),
+             "--file", str(self.spec), "--scope", "src/", *args],
+            cwd=self.root, capture_output=True, text=True, timeout=30,
+        )
+
+    def save_config(self):
+        (self.root / runner.CONFIG_FILE).write_text(json.dumps(self.config))
+        self.commit()
+
+    def test_cli_uses_configured_default_runner(self):
+        self.config["default_runner"] = "local-worker"
+        self.save_config()
+        proc = self.run_cli()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["runner"], "local-worker")
+
+    def test_cli_override_selects_arbitrary_registered_name(self):
+        self.config["default_runner"] = "local-worker"
+        self.config["runners"]["private-adapter-42"] = [sys.executable, "coder.py"]
+        self.save_config()
+        proc = self.run_cli("--runner", "private-adapter-42")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["runner"], "private-adapter-42")
+
+    def test_cli_requires_explicit_selection_without_default(self):
+        proc = self.run_cli()
+        self.assertEqual(proc.returncode, 3)
+        self.assertIn("default_runner", proc.stderr)
+        self.assertFalse((self.root / "src/result.txt").exists())
+
+    def test_unregistered_fallback_is_rejected_before_execution(self):
+        proc = self.run_cli("--runner", "local-worker", "--fallback", "unregistered")
+        self.assertEqual(proc.returncode, 3)
+        self.assertIn("runners.unregistered", proc.stderr)
+        self.assertFalse((self.root / "src/result.txt").exists())
+
+    def test_configured_fallback_works_with_arbitrary_adapter_names(self):
+        self.config["default_runner"] = "broken-adapter"
+        self.config["runners"]["broken-adapter"] = [sys.executable, "-c", "raise SystemExit(3)"]
+        self.save_config()
+        proc = self.run_cli("--fallback", "local-worker")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["runner"], "local-worker")
+
+    def test_default_must_reference_registered_runner(self):
+        self.config["default_runner"] = "not-configured"
+        (self.root / runner.CONFIG_FILE).write_text(json.dumps(self.config))
+        with self.assertRaisesRegex(runner.RunnerError, "runners.not-configured"):
+            runner.load_config(self.root)
+
+    def test_provider_names_have_no_implicit_command(self):
+        with self.assertRaisesRegex(runner.RunnerError, "runners.codex"):
+            runner.runner_command({"runners": {}}, "codex")
 
     def test_installed_entrypoint_uses_callers_project(self):
         # Run installed scripts from outside their source tree with no TASKS_ROOT.

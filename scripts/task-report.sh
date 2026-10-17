@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reports delegation progress to the task tracker (see AGENTS.md "Delegation flow").
-# Used by junie-task.sh and kilo-task.sh through their --task-id flag.
+# Used by runner adapters to report progress through their task id.
 #
 #   scripts/task-report.sh start <id>            mark the task in_progress
 #   scripts/task-report.sh note  <id> "<text>"   append a dated note, leaving the status unchanged

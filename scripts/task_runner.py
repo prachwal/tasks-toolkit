@@ -14,13 +14,23 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts import sprint_auto_state as sas
+from scripts.runner_config import (
+    CONFIG_FILE as CONFIG_FILE,
+)
+from scripts.runner_config import (
+    RunnerError as RunnerError,
+)
+from scripts.runner_config import (
+    load_config as load_config,
+)
+from scripts.runner_config import (
+    runner_command as runner_command,
+)
+from scripts.runner_config import (
+    select_runner as select_runner,
+)
 
-CONFIG_FILE = ".tasks-toolkit.json"
 NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
-
-
-class RunnerError(Exception):
-    """A runner or verification prerequisite is missing."""
 
 
 def git(root: Path, *args: str) -> str:
@@ -28,37 +38,6 @@ def git(root: Path, *args: str) -> str:
     if result.returncode:
         raise RunnerError(result.stderr.strip() or f"git {args[0]} failed")
     return result.stdout if "-z" in args else result.stdout.rstrip("\n")
-
-
-def load_config(root: Path) -> dict:
-    path = root / CONFIG_FILE
-    if not path.is_file():
-        raise RunnerError(f"create {CONFIG_FILE} with a non-empty checks list before running tasks")
-    config = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(config, dict):
-        raise RunnerError("runner config must be an object")
-    checks = config.get("checks")
-    if not isinstance(checks, list) or not checks or not all(valid_command(c) for c in checks):
-        raise RunnerError("checks must be a non-empty list of command argument arrays")
-    runners = config.get("runners", {})
-    if not isinstance(runners, dict) or not all(valid_command(c) for c in runners.values()):
-        raise RunnerError("runners must map names to command argument arrays")
-    timeout = config.get("timeout", 120)
-    if type(timeout) is not int or timeout < 1:
-        raise RunnerError("timeout must be a positive integer")
-    return config
-
-
-def valid_command(command: object) -> bool:
-    return isinstance(command, list) and bool(command) and all(isinstance(v, str) and bool(v) for v in command)
-
-
-def runner_command(config: dict, runner: str) -> list[str]:
-    if runner in config.get("runners", {}):
-        return list(config["runners"][runner])
-    if runner == "codex":
-        return ["codex", "exec", "--sandbox", "workspace-write", "-"]
-    raise RunnerError(f"configure runners.{runner} in {CONFIG_FILE}; the command receives the spec on stdin")
 
 
 def scope_conformity(files: list[str], scopes: list[str]) -> tuple[bool, list[str]]:
@@ -186,21 +165,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".")
     parser.add_argument("--task-id")
     parser.add_argument("--scope", action="append", default=[])
-    parser.add_argument("--runner", default="codex", choices=["codex", "junie", "kilo"])
-    parser.add_argument("--fallback", default="none", choices=["none", "codex", "junie", "kilo"])
+    parser.add_argument("--runner", help="registered runner name (default: configuration default_runner)")
+    parser.add_argument("--fallback", default="none", help="registered fallback runner, or none")
     args = parser.parse_args(argv)
     try:
         root = Path(args.root).resolve()
         spec = Path(args.file).resolve()
         config = load_config(root)
+        selected = select_runner(config, args.runner)
+        if args.fallback != "none":
+            runner_command(config, args.fallback)
         scopes = args.scope
         if args.task_id:
             from scripts import tasks
             node = tasks.find(tasks.load(), args.task_id)
             scopes = scopes or [link["value"] for link in node.get("links", []) if link["kind"] == "scope"]
-        report = execute_task(root, spec, args.name, args.runner, scopes, config)
+        report = execute_task(root, spec, args.name, selected, scopes, config)
         # A failed coder may have left changes. Never retry over those changes.
-        if report["exit_code"] == 3 and args.fallback not in ("none", args.runner) and not git(root, "status", "--porcelain"):
+        if report["exit_code"] == 3 and args.fallback not in ("none", selected) and not git(root, "status", "--porcelain"):
             report = execute_task(root, spec, args.name, args.fallback, scopes, config)
         write_report(root, args.name, report)
         print(json.dumps(report, indent=2))

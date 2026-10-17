@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts import sprint_auto_execute as execute
+from scripts import sprint_auto_preflight as preflight
 from scripts import sprint_auto_prepare as prepare
 from scripts import sprint_auto_state as sas
 from scripts import task_runner as runner
@@ -61,7 +62,10 @@ def run(root: Path, goal: str, name: str, answers: dict, plan: Path) -> dict:
     if not runner.NAME.fullmatch(name):
         raise runner.RunnerError("invalid run name")
     config = runner.load_config(root)
-    policy = answers.get("policy", {})
+    report = preflight.collect_preflight(root, {"goal": goal}, answers)
+    if report["blockers"] or report["questions"]:
+        return {"status": "blocked" if report["blockers"] else "needs_answers", "preflight": report}
+    policy = report["approval_scope"]["policy"]
     if policy.get("fallback", "none") != "none" or policy.get("retries", 0) != 0:
         raise runner.RunnerError("automated sprints require fallback=none and retries=0")
     for flag in ("push", "accept_flags", "reset", "clean"):
@@ -69,9 +73,7 @@ def run(root: Path, goal: str, name: str, answers: dict, plan: Path) -> dict:
             raise runner.RunnerError(f"automated sprints do not support {flag}=true")
     if policy.get("serial", True) is not True:
         raise runner.RunnerError("automated sprints execute serially")
-    runner_command = runner.runner_command(config, policy.get("runner", "codex"))
-    if not runner_command:
-        raise runner.RunnerError("runner command missing")
+    runner.select_runner(config, policy.get("runner"))
     prepared = prepare.prepare_run(root, {"goal": goal}, answers, name, plan)
     if prepared["status"] != "prepared":
         return prepared

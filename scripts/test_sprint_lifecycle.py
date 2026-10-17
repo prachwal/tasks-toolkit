@@ -18,7 +18,7 @@ class LifecycleTests(RepositoryCase):
         super().setUp()
         self.answers = {
             "goal_reviewed": True, "allowed_scopes": ["src/"],
-            "policy": {"runner": "codex", "serial": True, "push": False, "fallback": "none",
+            "policy": {"runner": "local-worker", "serial": True, "push": False, "fallback": "none",
                        "retries": 0, "accept_flags": False, "reset": False, "clean": False},
         }
         self.plan = {"sprint": {"slug": "result", "title": "Write result", "goal": "Verify execution"},
@@ -67,7 +67,7 @@ class LifecycleTests(RepositoryCase):
         runner.git(self.root, "branch", "sprint/result")
         wt = self.root / "tmp/worktrees/result"
         runner.git(self.root, "worktree", "add", str(wt), "sprint/result")
-        report = runner.execute_task(wt, self.spec, "result", "codex", ["src/"], self.config)
+        report = runner.execute_task(wt, self.spec, "result", "local-worker", ["src/"], self.config)
         checkpoint = state.RunState(run_name="result", initial_main_sha=self.base,
                                     verified_commit=report["commit"], allowed_scopes=["src/"],
                                     expected_refs={"worktree": str(wt), "sprint_branch": "sprint/result"})
@@ -114,3 +114,32 @@ class LifecycleTests(RepositoryCase):
         self.assertNotEqual(second.returncode, 0)
         self.assertIn("contains changes", second.stderr)
         self.assertEqual((worktree / "src/result.txt").read_text(), "manual work")
+
+    def test_lifecycle_uses_configured_default_when_policy_omits_runner(self):
+        self.config["default_runner"] = "local-worker"
+        (self.root / runner.CONFIG_FILE).write_text(json.dumps(self.config))
+        self.commit()
+        del self.answers["policy"]["runner"]
+        self.answers_path.write_text(json.dumps(self.answers))
+        proc = self.run_lifecycle()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        checkpoint = state.read_checkpoint(state.state_path(self.root, "result"))
+        self.assertEqual(checkpoint.runner, "local-worker")
+        self.assertEqual(json.loads(proc.stdout)["results"][0]["runner"], "local-worker")
+
+    def test_delegated_runner_choice_is_used_by_execution(self):
+        del self.answers["policy"]["runner"]
+        self.answers["decisions"] = [{"id": "runner", "delegated": True,
+                                     "safe_default": "local-worker", "rationale": "project adapter"}]
+        self.answers_path.write_text(json.dumps(self.answers))
+        proc = self.run_lifecycle()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        checkpoint = state.read_checkpoint(state.state_path(self.root, "result"))
+        self.assertEqual(checkpoint.runner, "local-worker")
+
+    def test_unconfigured_policy_runner_stops_before_import(self):
+        self.answers["policy"]["runner"] = "unconfigured"
+        self.answers_path.write_text(json.dumps(self.answers))
+        proc = self.run_lifecycle()
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertFalse((self.root / "tasks/tasks.db").exists())

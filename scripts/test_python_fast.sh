@@ -11,6 +11,7 @@ echo "=== fast Python tests ==="
 PYTHONPATH=scripts python3 -m unittest \
   test_tasks_mcp \
   test_run_stats \
+  test_run_summary \
   test_tasks_watch \
   2>&1
 

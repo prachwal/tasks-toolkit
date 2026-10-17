@@ -86,7 +86,7 @@ TOOLS: dict[str, tuple] = {
         "Add a task under a sprint id, or a subtask under a task id (max depth: sprint > task > subtask).",
         schema({"parent": text("Sprint id (e.g. '2') or task id (e.g. '2.1')"), "title": text("Title"),
                 "description": text("Description / acceptance criteria"),
-                "assignee": text("Who does it: junie, kilo, claude, ..."),
+                "assignee": text("Person or runner responsible for the task"),
                 "after": text("Comma separated ids that must be done first")}, ["parent", "title"]),
         {"readOnlyHint": False, "destructiveHint": False},
         lambda a: ["add", a["parent"], a["title"]] + _opts(a, description="--desc", assignee="--assignee",

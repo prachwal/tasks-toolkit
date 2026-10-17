@@ -2,7 +2,7 @@
 """Delivery-speed statistics for the delegation runners.
 
 Reads tmp/runs/<name>.summary.json when present (exact) and falls back to the last line of
-tmp/runs/<name>.status for older runs ("[mm:ss] done - junie exit 0, verification PASSED").
+tmp/runs/<name>.status for older runs ("[mm:ss] done - worker exit 0, verification PASSED").
 A run whose status never reached "done" counts as unfinished (killed, stalled or crashed).
 Prints, per runner: runs, verified, failed, unfinished, median and p90 duration, plus the
 share of runs that did not end verified ("rework rate"). Standard library only, read-only.
@@ -21,7 +21,7 @@ from pathlib import Path
 
 LAST_STAMP = re.compile(r"^\[(\d+):(\d{2})\]\s+(.*)$")
 RUNNER_TAIL = re.compile(r"\brunner=(\w+)")
-DONE_RUNNER = re.compile(r"^done - (junie|kilo|codex|haiku) exit (\d+), verification (PASSED|FAILED)")
+DONE_RUNNER = re.compile(r"^done - ([A-Za-z0-9][A-Za-z0-9_-]*) exit (\d+), verification (PASSED|FAILED)")
 
 
 def parse_status(path: Path) -> dict | None:
