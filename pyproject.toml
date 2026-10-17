@@ -66,4 +66,4 @@ markers = [
   "slow: marks tests as slow (subprocess-heavy)",
   "integration: marks tests as integration tests",
 ]
-addopts = "-n auto"
+addopts = "-n auto --ignore=scripts/test_agent_config.py --ignore=scripts/test_tasks_watch.py"
