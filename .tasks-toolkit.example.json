@@ -1,0 +1,10 @@
+{
+  "checks": [
+    ["python3", "-m", "ruff", "check", "scripts"],
+    ["python3", "-m", "mypy", "scripts"],
+    ["python3", "-m", "pytest", "-q"],
+    ["bash", "scripts/test_spec_lint.sh"]
+  ],
+  "runners": {},
+  "timeout": 120
+}

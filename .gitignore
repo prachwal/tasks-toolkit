@@ -18,3 +18,8 @@ tasks/tasks.snapshot.json
 # Temp / scratch
 tmp/
 *.log
+
+# Distribution artifacts
+*.egg-info/
+build/
+dist/

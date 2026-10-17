@@ -17,16 +17,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import os
 import signal
 import sys
 import time
 from pathlib import Path
 
 # Ensure we can import tasks from the same directory.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import tasks  # noqa: E402
-
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import tasks  # noqa: E402
 
 _shutting_down = False
 

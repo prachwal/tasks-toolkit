@@ -4,7 +4,7 @@
 #
 #   scripts/apply-plan.sh <name> [--yes] [--start]
 #
-# --start also creates the sprint branch (scripts/worktree.sh sprint start <n> <slug>).
+# --start is accepted for compatibility but no longer creates a sprint branch (worktree.sh removed).
 # Exit: 0 applied | 1 usage/missing plan | 2 not confirmed | 4 plan invalid | 5 already applied
 set -euo pipefail
 
@@ -46,6 +46,3 @@ sprint_id="$(printf '%s\n' "$mapping" | head -1 | sed 's/.*-> \([0-9]*\)\..*/\1/
 slug="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sprint"]["slug"])' "$plan")"
 printf 'sprint %s on %s\n' "$sprint_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$marker"
 echo "applied: sprint $sprint_id ($slug)"
-if [ "$start" -eq 1 ]; then
-  bash scripts/worktree.sh sprint start "$sprint_id" "$slug"
-fi

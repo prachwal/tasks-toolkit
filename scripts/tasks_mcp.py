@@ -13,10 +13,10 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import tasks  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import tasks  # noqa: E402
 
-SERVER = {"name": "vibe-tasks", "version": "1.0.0"}
+SERVER = {"name": "tasks", "version": "1.0.0"}
 SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
 
@@ -185,7 +185,7 @@ def _resolve_ids(args: dict) -> list[str]:
     if has_id and not has_ids:
         return [args["id"]]
     if has_ids and not has_id:
-        return args["ids"]
+        return [str(value) for value in args["ids"]]
     if has_id and has_ids:
         raise ValueError("pass either id or ids, not both")
     raise ValueError("pass either id or ids")
@@ -266,10 +266,10 @@ def handle(message: dict) -> dict | None:
     if msg_id is None:  # notification (e.g. notifications/initialized)
         return None
 
-    def ok(result):
+    def ok(result) -> dict:
         return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
-    def fail(code, text_):
+    def fail(code, text_) -> dict:
         return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": text_}}
 
     if method == "initialize":

@@ -4,10 +4,7 @@ Run: bash scripts/test_sprint_auto.sh (if exists) or manual verification.
 """
 from __future__ import annotations
 
-import os
 import subprocess
-import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -43,7 +40,7 @@ class SprintAutoTests(unittest.TestCase):
             capture_output=True, text=True, timeout=10,
         )
         self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("unknown option", proc.stderr)
+        self.assertIn("unrecognized arguments", proc.stderr)
 
 
 if __name__ == "__main__":

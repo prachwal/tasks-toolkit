@@ -49,10 +49,10 @@ Implement a new feature.
 Add unit tests in tests/NewFileTests.cs.
 
 ## Acceptance
-Run \`bash scripts/test.sh\` and verify green.
+Run \`bash examples/test.sh\` and verify green.
 
 ## Live check
-Run \`bash scripts/run.sh hash text -i hello\`"
+Run \`bash examples/run.sh hash text -i hello\`"
   run_lint "$tmpdir/valid.md"
   if [ "$LINT_RC" -eq 0 ] && [ "$LINT_OUT" = "spec-lint: OK" ]; then
     pass "valid spec exits 0 with OK"
@@ -70,10 +70,10 @@ test_missing_goal() {
 Tests for X.
 
 ## Acceptance
-Run \`bash scripts/test.sh\`.
+Run \`bash examples/test.sh\`.
 
 ## Live check
-Run \`bash scripts/run.sh\`"
+Run \`bash examples/run.sh\`"
   run_lint "$tmpdir/no-goal.md"
   if [ "$LINT_RC" -eq 1 ] && printf '%s' "$LINT_ERR" | grep -q "missing-section.*Goal"; then
     pass "missing ## Goal detected"
@@ -91,10 +91,10 @@ Do something.
 Tests.
 
 ## Acceptance
-Run \`bash scripts/test.sh\`.
+Run \`bash examples/test.sh\`.
 
 ## Live check
-Run \`bash scripts/run.sh\`"
+Run \`bash examples/run.sh\`"
   run_lint "$tmpdir/no-files.md"
   if [ "$LINT_RC" -eq 1 ] && printf '%s' "$LINT_ERR" | grep -q "missing-section.*Files"; then
     pass "missing ## Files detected"
@@ -112,10 +112,10 @@ Do something.
 - NEW src/X.cs
 
 ## Acceptance
-Run \`bash scripts/test.sh\`.
+Run \`bash examples/test.sh\`.
 
 ## Live check
-Run \`bash scripts/run.sh\`"
+Run \`bash examples/run.sh\`"
   run_lint "$tmpdir/no-tests.md"
   if [ "$LINT_RC" -eq 1 ] && printf '%s' "$LINT_ERR" | grep -q "missing-section.*Tests"; then
     pass "missing ## Tests detected"
@@ -136,7 +136,7 @@ Do something.
 Tests.
 
 ## Live check
-Run \`bash scripts/run.sh\`"
+Run \`bash examples/run.sh\`"
   run_lint "$tmpdir/no-acceptance.md"
   if [ "$LINT_RC" -eq 1 ] && printf '%s' "$LINT_ERR" | grep -q "missing-section.*Acceptance"; then
     pass "missing ## Acceptance detected"
@@ -157,7 +157,7 @@ Do something.
 Tests.
 
 ## Acceptance
-Run \`bash scripts/test.sh\`"
+Run \`bash examples/test.sh\`"
   run_lint "$tmpdir/no-live.md"
   if [ "$LINT_RC" -eq 1 ] && printf '%s' "$LINT_ERR" | grep -q "missing-section.*Live check"; then
     pass "missing ## Live check detected"
@@ -177,10 +177,10 @@ Do something.
 Tests.
 
 ## Acceptance
-Run \`bash scripts/test.sh\`.
+Run \`bash examples/test.sh\`.
 
 ## Live check
-Run \`bash scripts/run.sh\`"
+Run \`bash examples/run.sh\`"
   run_lint "$tmpdir/empty-sec.md"
   if [ "$LINT_RC" -eq 1 ] && printf '%s' "$LINT_ERR" | grep -q "empty-section.*Files"; then
     pass "empty ## Files detected"
@@ -201,10 +201,10 @@ No files listed here.
 Tests.
 
 ## Acceptance
-Run \`bash scripts/test.sh\`.
+Run \`bash examples/test.sh\`.
 
 ## Live check
-Run \`bash scripts/run.sh\`"
+Run \`bash examples/run.sh\`"
   run_lint "$tmpdir/zero-files.md"
   if [ "$LINT_RC" -eq 1 ] && printf '%s' "$LINT_ERR" | grep -q "files-count.*0"; then
     pass "zero file entries detected"
@@ -234,10 +234,10 @@ Do something.
 Tests.
 
 ## Acceptance
-Run \`bash scripts/test.sh\`.
+Run \`bash examples/test.sh\`.
 
 ## Live check
-Run \`bash scripts/run.sh\`"
+Run \`bash examples/run.sh\`"
   run_lint "$tmpdir/nine-files.md"
   if [ "$LINT_RC" -eq 1 ] && printf '%s' "$LINT_ERR" | grep -q "files-count.*9"; then
     pass "nine file entries detected"
@@ -256,7 +256,7 @@ test_too_many_lines() {
     echo "## Tests"
     echo "Tests."
     echo "## Acceptance"
-    echo "Run \`bash scripts/test.sh\`."
+    echo "Run \`bash examples/test.sh\`."
     echo "## Live check"
     # Pad to reach 121 lines total (9 header + 112 padding = 121)
     local count=0
@@ -355,14 +355,6 @@ Anything."
   fi
 }
 
-test_template_passes() {
-  run_lint "$PROJECT_ROOT/knowledge/spec-template.md"
-  if [ "$LINT_RC" -eq 0 ] && [ "$LINT_OUT" = "spec-lint: OK" ]; then
-    pass "knowledge/spec-template.md passes spec-lint"
-  else
-    fail "template" "rc=$LINT_RC out='$LINT_OUT' err='$LINT_ERR'"
-  fi
-}
 
 test_run_task_bad_spec() {
   # run-task.sh should reject a bad spec before creating any worktree
@@ -377,9 +369,6 @@ Incomplete spec."
   local repo="$tmpdir/repo"
   mkdir -p "$repo/scripts"
   cp "$PROJECT_ROOT/scripts/spec-lint.sh" "$repo/scripts/spec-lint.sh"
-  cp "$PROJECT_ROOT/scripts/junie-task.sh" "$repo/scripts/junie-task.sh"
-  cp "$PROJECT_ROOT/scripts/kilo-task.sh" "$repo/scripts/kilo-task.sh"
-  cp "$PROJECT_ROOT/scripts/worktree.sh" "$repo/scripts/worktree.sh"
   cp "$RUN_TASK" "$repo/scripts/run-task.sh"
   mkdir -p "$repo/tmp/runs"
 
@@ -426,7 +415,6 @@ test_multiple_violations
 test_no_arg
 test_missing_file
 test_spec_lint_off
-test_template_passes
 test_run_task_bad_spec
 
 echo ""

@@ -1,0 +1,59 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Tracker: refresh view",
+      "type": "shell",
+      "command": "python3 scripts/tasks.py render",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Tracker: sync (view + snapshot)",
+      "type": "shell",
+      "command": "python3 scripts/tasks.py snapshot",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Tracker: check",
+      "type": "shell",
+      "command": "python3 scripts/tasks.py check",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Tracker: next",
+      "type": "shell",
+      "command": "python3 scripts/tasks.py next",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Tracker: list",
+      "type": "shell",
+      "command": "python3 scripts/tasks.py list",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Tracker: watch view",
+      "type": "shell",
+      "command": "python3 scripts/tasks_watch.py",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

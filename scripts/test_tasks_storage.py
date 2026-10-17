@@ -4,20 +4,19 @@ Run: PYTHONPATH=scripts python3 -m unittest test_tasks_storage
 """
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 
-import tasks_storage as ts
+from scripts import tasks_storage as ts
 
 
 class StorageTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        os.environ["VIBE_TASKS_TESTING"] = "1"
+        os.environ["TASKS_TESTING"] = "1"
         ts.DATA_FILE = self.tmp / "tasks" / "tasks.db"
         ts.VIEW_DIR = self.tmp / "tasks"
         ts.README_FILE = ts.VIEW_DIR / "README.md"
@@ -57,9 +56,9 @@ class StorageTests(unittest.TestCase):
 
     def test_testing_guard_blocks_real_path(self):
         import os
-        os.environ["VIBE_TASKS_TESTING"] = "1"
+        os.environ["TASKS_TESTING"] = "1"
         path = Path("/home/prachwal/src/emulators/vibe-emulator-001/tasks/tasks.snapshot.json")
-        with self.assertRaises(Exception):
+        with self.assertRaises(ts.TaskError):
             ts._testing_guard(path)
 
 

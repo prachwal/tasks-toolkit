@@ -12,17 +12,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import tasks
-import tasks_storage
-import tasks_plan_import as tpi
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import tasks, tasks_storage
 
 
 class ImportPlanTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        os.environ["VIBE_TASKS_ROOT"] = str(self.tmp)
+        os.environ["TASKS_ROOT"] = str(self.tmp)
         subprocess.run(
             [sys.executable, str(Path(__file__).resolve().parent / "tasks_init.py"),
              "--path", str(self.tmp / "tasks" / "tasks.db"), "--project", "T"],
@@ -47,8 +45,8 @@ class ImportPlanTests(unittest.TestCase):
 
     def tearDown(self):
         import shutil
-        if "VIBE_TASKS_ROOT" in os.environ:
-            del os.environ["VIBE_TASKS_ROOT"]
+        if "TASKS_ROOT" in os.environ:
+            del os.environ["TASKS_ROOT"]
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _run_import(self, run_id="run-1", plan_path=None):
@@ -57,7 +55,7 @@ class ImportPlanTests(unittest.TestCase):
             [sys.executable, str(Path(__file__).resolve().parent.parent / "scripts" / "tasks.py"),
              "import-plan", str(pp), "--run-id", run_id],
             capture_output=True, text=True,
-            env={**os.environ, "VIBE_TASKS_ROOT": str(self.tmp)},
+            env={**os.environ, "TASKS_ROOT": str(self.tmp)},
             cwd=str(Path(__file__).resolve().parent.parent),
         )
 

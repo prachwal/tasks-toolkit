@@ -4,6 +4,7 @@ Extracted from tasks.py to keep the monolith small and testable.
 """
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
@@ -11,12 +12,13 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from typing import cast
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import tasks_init  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import tasks_init  # noqa: E402
 
 # Re-use ROOT resolution from tasks_init
-ROOT = tasks_init.resolve_root(Path(__file__).resolve().parent.parent)
+ROOT = tasks_init.resolve_root(Path.cwd())
 DATA_FILE = ROOT / "tasks" / "tasks.db"
 VIEW_DIR = ROOT / "tasks"
 README_FILE = VIEW_DIR / "README.md"
@@ -24,13 +26,11 @@ VIEW_FILE = README_FILE
 LOCK_FILE = ROOT / "tasks" / ".lock"
 SNAPSHOT_FILE = ROOT / "tasks" / "tasks.snapshot.json"
 RECOVERY_DIR = ROOT / "tasks" / "removed"
-BACKUP_DIR = Path(os.environ.get("VIBE_TASKS_BACKUP_DIR", str(Path.home() / ".local" / "share" / "vibe-tasks")))
-BACKUP_REMOTE = os.environ.get("VIBE_TASKS_BACKUP_REMOTE", "git@gitlab.com:prachwal/vibe-emulator-tasks.git")
+BACKUP_DIR = Path(os.environ.get("TASKS_BACKUP_DIR", str(Path.home() / ".local" / "share" / "tasks")))
+BACKUP_REMOTE = os.environ.get("TASKS_BACKUP_REMOTE")  # optional
 
 FIELDS = ("id", "uid", "title", "description", "status", "reason", "assignee", "goal", "start", "end",
           "created", "updated", "started", "finished")
-
-LINK_KINDS = ("spec", "patch", "runner", "model", "agent", "commit", "branch", "fixes", "scope")
 
 NODES_V2_DDL = """
 CREATE TABLE nodes_new (
@@ -55,18 +55,21 @@ CREATE TABLE nodes_new (
 );
 """
 
-from tasks_model import *  # noqa: E402, F401, F403
+
+from scripts.tasks_model import LINK_KINDS as LINK_KINDS  # noqa: E402
+from scripts.tasks_model import TaskError, actor, depth, new_uid, now_iso, today, validate  # noqa: E402
 
 
-def connect(create: bool = True) -> sqlite3.Connection:
+def connect(create: bool = True, path: Path | None = None, project: str | None = None) -> sqlite3.Connection:
     """Open the database; create from scratch if missing."""
-    if not DATA_FILE.exists():
+    db_path = path if path is not None else DATA_FILE
+    if not db_path.exists():
         if not create:
-            raise TaskError(f"no database at {DATA_FILE.parent.name}/{DATA_FILE.name}; run: python3 scripts/tasks_init.py")
-        import tasks_init
-        tasks_init.create_database(DATA_FILE, ROOT.name)
-        print(f"note: created a new empty task database at {DATA_FILE.parent.name}/{DATA_FILE.name}", file=__import__("sys").stderr)
-    conn = sqlite3.connect(DATA_FILE, isolation_level=None, timeout=30)
+            raise TaskError(f"no database at {db_path.parent.name}/{db_path.name}; run: python3 scripts/tasks_init.py")
+        from scripts import tasks_init
+        tasks_init.create_database(db_path, project or ROOT.name)
+        print(f"note: created a new empty task database at {db_path.parent.name}/{db_path.name}", file=__import__("sys").stderr)
+    conn = sqlite3.connect(db_path, isolation_level=None, timeout=30)
     conn.row_factory = sqlite3.Row
     migrate(conn)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -139,12 +142,13 @@ def _backfill_uids(conn: sqlite3.Connection) -> None:
         raise
 
 
-def load(conn: sqlite3.Connection | None = None) -> dict:
+def load(conn: sqlite3.Connection | None = None, *, path: Path | None = None, project: str | None = None) -> dict:
     """Build the in-memory tree from the database."""
-    if conn is None and not DATA_FILE.exists():
-        return {"version": 2, "project": ROOT.name, "sprints": []}
+    db_path = path if path is not None else DATA_FILE
+    if conn is None and not db_path.exists():
+        return {"version": 2, "project": project or ROOT.name, "sprints": []}
     own = conn is None
-    conn = conn or connect()
+    conn = conn or connect(path=db_path)
     try:
         project = conn.execute("SELECT value FROM meta WHERE key = 'project'").fetchone()[0]
         deps: dict[str, list[str]] = {}
@@ -174,30 +178,31 @@ def load(conn: sqlite3.Connection | None = None) -> dict:
 class Locked:
     """Exclusive lock so parallel agents cannot interleave a change and its re-render."""
 
+    def __init__(self, path: Path | None = None):
+        self.path = path if path is not None else LOCK_FILE
+
     def __enter__(self):
-        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = LOCK_FILE.open("w")
-        import fcntl
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = self.path.open("w")
         fcntl.flock(self._fh, fcntl.LOCK_EX)
         return self
 
     def __exit__(self, *exc):
-        import fcntl
         fcntl.flock(self._fh, fcntl.LOCK_UN)
         self._fh.close()
 
 
 def _testing_guard(target: Path) -> None:
-    """When VIBE_TASKS_TESTING=1, refuse to write outside a temp dir."""
+    """When TASKS_TESTING=1, refuse to write outside a temp dir."""
     import os
-    if os.environ.get("VIBE_TASKS_TESTING") != "1":
+    if os.environ.get("TASKS_TESTING") != "1":
         return
     import tempfile
     tmp_dir = Path(tempfile.gettempdir()).resolve()
     try:
         target.resolve().relative_to(tmp_dir)
     except ValueError:
-        raise TaskError(f"refusing to write outside a temp dir while testing: {target}")
+        raise TaskError(f"refusing to write outside a temp dir while testing: {target}") from None
 
 
 def _write_atomic(target: Path, text: str) -> None:
@@ -211,25 +216,24 @@ def _write_atomic(target: Path, text: str) -> None:
             os.fsync(handle.fileno())
         os.replace(tmp, target)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
-def write_view(data: dict) -> None:
+def write_view(data: dict, *, view_dir: Path | None = None, readme_file: Path | None = None) -> None:
     """Regenerate the tasks/ view (README + per-sprint files)."""
     import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import tasks_render  # noqa: E402
-    files = tasks_render.expected_view(data)
-    VIEW_DIR.mkdir(parents=True, exist_ok=True)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts import tasks_render  # noqa: E402
+    view_dir = view_dir if view_dir is not None else VIEW_DIR
+    files = tasks_render.expected_view(data, view_dir=view_dir, readme_file=readme_file or README_FILE)
+    view_dir.mkdir(parents=True, exist_ok=True)
     for path, text in files.items():
         _testing_guard(path)
         _write_atomic(path, text)
     keep = {p.name for p in files}
-    for stale in VIEW_DIR.glob("sprint-*.md"):
+    for stale in view_dir.glob("sprint-*.md"):
         if stale.name not in keep:
             stale.unlink()
 
@@ -239,27 +243,30 @@ def snapshot_json(data: dict) -> str:
     return json.dumps(data, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
 
 
-def write_snapshot(data: dict) -> None:
+def write_snapshot(data: dict, path: Path | None = None) -> None:
     """Write the committed JSON snapshot file."""
-    _testing_guard(SNAPSHOT_FILE)
-    _write_atomic(SNAPSHOT_FILE, snapshot_json(data))
+    target = path if path is not None else SNAPSHOT_FILE
+    _testing_guard(target)
+    _write_atomic(target, snapshot_json(data))
 
 
-def _log_events(conn: sqlite3.Connection, before: dict, after: dict) -> None:
-    """Write one audit event per added/removed node and per changed field."""
-    import datetime as dt
-    when = dt.datetime.now().replace(microsecond=0).isoformat()
+def _log_events(conn: sqlite3.Connection, before: dict, after: dict, action: str = "change") -> None:
+    """Write one audit event per added/removed node and per changed field (inside the transaction)."""
+    when = now_iso()
     who = actor()
-    action = os.environ.get("CURRENT_ACTION", "") or "change"
     for node_id in sorted(set(before) | set(after)):
         old_row = before.get(node_id)
         new_row = after.get(node_id)
-        uid = (new_row or old_row)["uid"]
+        current = new_row if new_row is not None else old_row
+        assert current is not None
+        uid = current["uid"]
         if old_row is None:
+            assert new_row is not None
             conn.execute("INSERT INTO events (ts,actor,action,node_uid,field,old,new) VALUES (?,?,?,?,?,?,?)",
                          (when, who, f"{action}:add", uid, "", "", new_row["title"]))
             continue
         if new_row is None:
+            assert old_row is not None
             conn.execute("INSERT INTO events (ts,actor,action,node_uid,field,old,new) VALUES (?,?,?,?,?,?,?)",
                          (when, who, f"{action}:remove", uid, "", old_row["title"], ""))
             continue
@@ -269,38 +276,31 @@ def _log_events(conn: sqlite3.Connection, before: dict, after: dict) -> None:
                              (when, who, action, uid, field, old_row[field], new_row[field]))
 
 
-def mutate(action) -> None:
-    """Run action(conn) in one transaction, validate, commit, re-render."""
-    import fcntl
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fh = LOCK_FILE.open("w")
-    fcntl.flock(fh, fcntl.LOCK_EX)
-    try:
-        conn = connect()
+def mutate(action, *, action_name="change", connect_fn=None, load_fn=None,
+           write_view_fn=None, write_snapshot_fn=None, lock_path=None, after_commit=None) -> None:
+    """Serialize, validate and commit a mutation before publishing derived files."""
+    with Locked(lock_path):
+        conn = (connect_fn or connect)()
         try:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 before = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM nodes")}
                 message = action(conn)
                 after = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM nodes")}
-                _log_events(conn, before, after)
-                data = load(conn)
-                # validate
-                import tasks as _tasks_mod
-                _tasks_mod.validate(data)
+                _log_events(conn, before, after, action_name)
+                data = (load_fn or load)(conn)
+                validate(data)
             except BaseException:
                 conn.execute("ROLLBACK")
                 raise
             conn.execute("COMMIT")
         finally:
             conn.close()
-        write_view(data)
-        write_snapshot(data)
-    finally:
-        fcntl.flock(fh, fcntl.LOCK_UN)
-        fh.close()
+        (write_view_fn or write_view)(data)
+        (write_snapshot_fn or write_snapshot)(data)
+        if after_commit:
+            after_commit(data)
     if message:
-        import sys
         print(message)
 
 
@@ -309,14 +309,14 @@ def row(conn: sqlite3.Connection, node_id: str) -> sqlite3.Row:
     found = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
     if found is None:
         raise TaskError(f"no such id: {node_id}")
-    return found
+    return cast(sqlite3.Row, found)
 
 
 def row_by_key(conn: sqlite3.Connection, key: str) -> sqlite3.Row:
     found = conn.execute("SELECT * FROM nodes WHERE id = ? OR uid = ?", (key, key)).fetchone()
     if found is None:
         raise TaskError(f"no such id: {key}")
-    return found
+    return cast(sqlite3.Row, found)
 
 
 def subtree_ids(conn: sqlite3.Connection, node_id: str) -> list[str]:

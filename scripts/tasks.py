@@ -19,701 +19,206 @@ Usage: scripts/tasks.py <command> --help
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
-import fcntl
 import json
-import os
-import re
-import secrets
+import os as os
 import sqlite3
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import tasks_init  # noqa: E402
-
-# Agents work in disposable worktrees (<main>/tmp/**); the tracker always lives in the main checkout.
-ROOT = tasks_init.resolve_root(Path(__file__).resolve().parent.parent)
-DATA_FILE = ROOT / "tasks" / "tasks.db"
-VIEW_DIR = ROOT / "tasks"             # generated Markdown view directory (git-ignored)
-README_FILE = VIEW_DIR / "README.md"  # index: overall + current sprint + links to the per-sprint files
-VIEW_FILE = README_FILE               # the primary generated file (alias for the README index)
-LOCK_FILE = ROOT / "tasks" / ".lock"
-SNAPSHOT_FILE = ROOT / "tasks" / "tasks.snapshot.json"
-RECOVERY_DIR = ROOT / "tasks" / "removed"
-# Backup clone (outside the project) with history; nothing pushes on its own (explicit --push only).
-BACKUP_DIR = Path(os.environ.get("VIBE_TASKS_BACKUP_DIR", str(Path.home() / ".local" / "share" / "vibe-tasks")))
-BACKUP_REMOTE = os.environ.get("VIBE_TASKS_BACKUP_REMOTE", "git@gitlab.com:prachwal/vibe-emulator-tasks.git")
-
-STATUSES = ("none", "in_progress", "blocked", "done", "cancelled", "review")
-ALIASES = {
-    "none": "none", "brak": "none", "todo": "none", "open": "none",
-    "in_progress": "in_progress", "in-progress": "in_progress", "w-trakcie": "in_progress",
-    "w_trakcie": "in_progress", "doing": "in_progress", "wip": "in_progress", "start": "in_progress",
-    "blocked": "blocked", "bloker": "blocked", "block": "blocked",
-    "done": "done", "gotowe": "done", "finished": "done",
-    "cancelled": "cancelled", "canceled": "cancelled", "anulowane": "cancelled", "anulowany": "cancelled",
-    "review": "review", "w-przeglądzie": "review", "w-przegladzie": "review", "przeglad": "review",
-}
-BADGE = {"none": "⬜ none", "in_progress": "🔄 in progress", "blocked": "⛔ blocked",
-         "done": "✅ done", "cancelled": "🚫 cancelled", "review": "🔎 review"}
-MAX_DEPTH = 3  # sprint > task > subtask
-
-# `nodes` rebuilt with the 'cancelled' status; used by migrate() for databases created before it.
-NODES_V2_DDL = """
-CREATE TABLE nodes_new (
-    id          TEXT PRIMARY KEY,
-    uid         TEXT NOT NULL DEFAULT '',
-    parent_id   TEXT REFERENCES nodes(id) ON DELETE CASCADE,
-    position    INTEGER NOT NULL,
-    level       INTEGER NOT NULL CHECK (level BETWEEN 1 AND 3),
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    status      TEXT NOT NULL DEFAULT 'none' CHECK (status IN ('none','in_progress','blocked','done','cancelled','review')),
-    reason      TEXT NOT NULL DEFAULT '',
-    assignee    TEXT NOT NULL DEFAULT '',
-    goal        TEXT NOT NULL DEFAULT '',
-    start       TEXT NOT NULL DEFAULT '',
-    end         TEXT NOT NULL DEFAULT '',
-    created     TEXT NOT NULL,
-    updated     TEXT NOT NULL,
-    started     TEXT NOT NULL DEFAULT '',
-    finished    TEXT NOT NULL DEFAULT '',
-    UNIQUE (parent_id, position)
-);
-"""
-
-
-class TaskError(Exception):
-    """A user-facing error (bad id, invalid transition, invalid data)."""
-
-
-# --------------------------------------------------------------------------- model
-
-def today() -> str:
-    return dt.date.today().isoformat()
-
-
-def now_iso() -> str:
-    """Local timestamp (second precision) used for audit events."""
-    return dt.datetime.now().replace(microsecond=0).isoformat()  # noqa: DTZ005 - local by design
-
-
-def actor() -> str:
-    """Whoever is making the change: $VIBE_ACTOR, else $USER, else 'unknown'."""
-    return os.environ.get("VIBE_ACTOR") or os.environ.get("USER") or "unknown"
-
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import tasks_init as tasks_init
+from scripts import (
+    tasks_render,  # noqa: E402
+    tasks_storage,  # noqa: E402
+)
+from scripts.tasks_model import (  # noqa: E402
+    BADGE,
+    MAX_DEPTH,
+    TaskError,
+    actor,
+    depth,
+    effective,
+    find,
+    leaves,
+    new_uid,
+    normalize_status,
+    now_iso,
+    parent_of,
+    progress,
+    ready,
+    today,
+    walk,
+)
+from scripts.tasks_model import (
+    LINK_KINDS as LINK_KINDS,
+)
+from scripts.tasks_model import (
+    validate as validate,
+)
+from scripts.tasks_render import (
+    bar as bar,
+)
+from scripts.tasks_render import (  # noqa: E402
+    counts as counts,
+)
+from scripts.tasks_render import (
+    render as render,
+)
+from scripts.tasks_render import (
+    render_node as render_node,
+)
+from scripts.tasks_render import (
+    render_readme as render_readme,
+)
+from scripts.tasks_render import (
+    render_sprint_file as render_sprint_file,
+)
+from scripts.tasks_render import (
+    slugify as slugify,
+)
+from scripts.tasks_storage import (
+    BACKUP_DIR as BACKUP_DIR,
+)
+from scripts.tasks_storage import (
+    BACKUP_REMOTE as BACKUP_REMOTE,
+)
+from scripts.tasks_storage import (
+    DATA_FILE as DATA_FILE,
+)
+from scripts.tasks_storage import (
+    FIELDS as FIELDS,
+)
+from scripts.tasks_storage import (
+    LOCK_FILE as LOCK_FILE,
+)
+from scripts.tasks_storage import (
+    NODES_V2_DDL as NODES_V2_DDL,
+)
+from scripts.tasks_storage import (
+    README_FILE as README_FILE,
+)
+from scripts.tasks_storage import (
+    RECOVERY_DIR as RECOVERY_DIR,
+)
+from scripts.tasks_storage import (  # noqa: E402
+    ROOT as ROOT,
+)
+from scripts.tasks_storage import (
+    SNAPSHOT_FILE as SNAPSHOT_FILE,
+)
+from scripts.tasks_storage import (
+    VIEW_DIR as VIEW_DIR,
+)
+from scripts.tasks_storage import (
+    VIEW_FILE as VIEW_FILE,
+)
+from scripts.tasks_storage import (
+    _testing_guard as _testing_guard,
+)
+from scripts.tasks_storage import (
+    _write_atomic as _write_atomic,
+)
+from scripts.tasks_storage import (
+    insert_node as insert_node,
+)
+from scripts.tasks_storage import (
+    leaf_ids as leaf_ids,
+)
+from scripts.tasks_storage import (
+    migrate as migrate,
+)
+from scripts.tasks_storage import (
+    parse_ids as parse_ids,
+)
+from scripts.tasks_storage import (
+    row as row,
+)
+from scripts.tasks_storage import (
+    row_by_key as row_by_key,
+)
+from scripts.tasks_storage import (
+    set_deps as set_deps,
+)
+from scripts.tasks_storage import (
+    set_leaf_status as set_leaf_status,
+)
+from scripts.tasks_storage import (
+    snapshot_json as snapshot_json,
+)
+from scripts.tasks_storage import (
+    subtree_ids as subtree_ids,
+)
+from scripts.tasks_storage import (
+    subtree_rows as subtree_rows,
+)
 
 CURRENT_ACTION = ""  # the CLI command currently running, recorded in the audit log
 
 
-def new_uid(conn: sqlite3.Connection | None = None) -> str:
-    """A fresh immutable uid (`T-` + 4 base36 chars), unique among the nodes already stored."""
-    alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
-    existing: set[str] = set()
-    if conn is not None:
-        existing = {r[0] for r in conn.execute("SELECT uid FROM nodes WHERE uid <> ''")}
-    while True:
-        uid = "T-" + "".join(secrets.choice(alphabet) for _ in range(4))
-        if uid not in existing:
-            return uid
 
 
-def new_node(node_id: str, title: str, **fields) -> dict:
-    node = {
-        "id": node_id, "uid": "", "title": title, "description": "", "status": "none", "reason": "",
-        "assignee": "", "depends_on": [], "notes": [], "links": [], "created": today(), "updated": today(),
-        "started": "", "finished": "", "children": [],
-    }
-    node.update({k: v for k, v in fields.items() if v is not None})
-    return node
-
-
-def empty_data(project: str = "Project") -> dict:
-    return {"version": 1, "project": project, "sprints": []}
-
-
-def walk(nodes):
-    """Yield every node depth-first in document order."""
-    for node in nodes:
-        yield node
-        yield from walk(node["children"])
-
-
-def find(data: dict, node_id: str) -> dict:
-    for node in walk(data["sprints"]):
-        if node["id"] == node_id or node.get("uid") == node_id:
-            return node
-    raise TaskError(f"no such id: {node_id}")
-
-
-def parent_of(data: dict, node_id: str) -> dict | None:
-    for node in walk(data["sprints"]):
-        if any(c["id"] == node_id for c in node["children"]):
-            return node
-    return None
-
-
-def depth(node_id: str) -> int:
-    return node_id.count(".") + 1
-
-
-def effective(node: dict) -> str:
-    """Status of a node: stored for leaves, derived from children otherwise (cascade up).
-
-    Cancelled children are terminal: all done or cancelled -> done, all cancelled -> cancelled, and
-    cancelled leaves never block a parent from completing.
-    """
-    if not node["children"]:
-        return node["status"]
-    states = [effective(c) for c in node["children"]]
-    if "blocked" in states:
-        return "blocked"
-    if all(s == "done" for s in states):
-        return "done"
-    if all(s == "cancelled" for s in states):
-        return "cancelled"
-    if all(s in ("done", "cancelled") for s in states):
-        return "done"
-    if any(s in ("in_progress", "done", "review") for s in states):
-        return "in_progress"
-    return "none"
-
-
-def leaves(node: dict):
-    if not node["children"]:
-        yield node
-    for child in node["children"]:
-        yield from leaves(child)
-
-
-def progress(node: dict) -> tuple[int, int]:
-    """(done, actionable) leaves; cancelled leaves are excluded from the denominator."""
-    all_leaves = [n for n in leaves(node) if n["status"] != "cancelled"]
-    return sum(1 for n in all_leaves if n["status"] == "done"), len(all_leaves)
-
-
-def next_child_id(parent: dict | None, data: dict) -> str:
-    siblings = parent["children"] if parent else data["sprints"]
-    top = 0
-    for s in siblings:
-        top = max(top, int(s["id"].rsplit(".", 1)[-1]))
-    return f"{parent['id']}.{top + 1}" if parent else str(top + 1)
-
-
-def normalize_status(value: str) -> str:
+@contextlib.contextmanager
+def using_root(root: Path):
+    """Temporarily bind the CLI facade to an explicit project (automation callers)."""
+    names = ("ROOT", "DATA_FILE", "VIEW_DIR", "README_FILE", "VIEW_FILE", "LOCK_FILE", "SNAPSHOT_FILE", "RECOVERY_DIR")
+    previous = {name: globals()[name] for name in names}
+    root = root.resolve()
+    view = root / "tasks"
+    globals().update(ROOT=root, DATA_FILE=view / "tasks.db", VIEW_DIR=view,
+                     README_FILE=view / "README.md", VIEW_FILE=view / "README.md",
+                     LOCK_FILE=view / ".lock", SNAPSHOT_FILE=view / "tasks.snapshot.json",
+                     RECOVERY_DIR=view / "removed")
     try:
-        return ALIASES[value.strip().lower()]
-    except KeyError:
-        raise TaskError(f"unknown status '{value}' (use: none/brak, in_progress/w-trakcie, blocked/bloker, done/gotowe)")
-
-
-def validate(data: dict) -> None:
-    seen: set[str] = set()
-    uids: set[str] = set()
-    ids = {n["id"] for n in walk(data["sprints"])}
-    for node in walk(data["sprints"]):
-        nid = node["id"]
-        if nid in seen:
-            raise TaskError(f"duplicate id {nid}")
-        seen.add(nid)
-        uid = node.get("uid", "")
-        if not uid:
-            raise TaskError(f"{nid}: missing uid")
-        if uid in uids:
-            raise TaskError(f"duplicate uid {uid}")
-        uids.add(uid)
-        for link in node.get("links", []):
-            if link["kind"] not in LINK_KINDS:
-                raise TaskError(f"{nid}: unknown link kind {link['kind']}")
-        if depth(nid) > MAX_DEPTH:
-            raise TaskError(f"{nid}: nesting deeper than sprint > task > subtask is not allowed")
-        if node["status"] not in STATUSES:
-            raise TaskError(f"{nid}: invalid status {node['status']}")
-        if not node["children"] and node["status"] == "blocked" and not node["reason"]:
-            raise TaskError(f"{nid}: a blocked item needs a reason")
-        for dep in node["depends_on"]:
-            if dep not in ids:
-                raise TaskError(f"{nid}: depends on unknown id {dep}")
-            if dep == nid or dep.startswith(nid + ".") or nid.startswith(dep + "."):
-                raise TaskError(f"{nid}: cannot depend on its own ancestor/descendant {dep}")
-    # dependency cycles
-    graph = {n["id"]: n["depends_on"] for n in walk(data["sprints"])}
-    state: dict[str, int] = {}
-
-    def visit(n: str, path: list[str]) -> None:
-        if state.get(n) == 2:
-            return
-        if state.get(n) == 1:
-            raise TaskError("dependency cycle: " + " -> ".join(path + [n]))
-        state[n] = 1
-        for dep in graph[n]:
-            visit(dep, path + [n])
-        state[n] = 2
-
-    for n in graph:
-        visit(n, [])
-
-
-# --------------------------------------------------------------------------- storage
-
-FIELDS = ("id", "uid", "title", "description", "status", "reason", "assignee", "goal", "start", "end",
-          "created", "updated", "started", "finished")
-
-
-LINK_KINDS = ("spec", "patch", "runner", "model", "agent", "commit", "branch", "fixes", "scope")
+        yield
+    finally:
+        globals().update(previous)
 
 
 def connect(create: bool = True) -> sqlite3.Connection:
-    """Open the database; when the file is missing, create it from scratch (see tasks_init.py)."""
-    if not DATA_FILE.exists():
-        if not create:
-            raise TaskError(f"no database at {DATA_FILE.parent.name}/{DATA_FILE.name}; run: python3 scripts/tasks_init.py")
-        tasks_init.create_database(DATA_FILE, ROOT.name)
-        print(f"note: created a new empty task database at {DATA_FILE.parent.name}/{DATA_FILE.name}", file=sys.stderr)
-    conn = sqlite3.connect(DATA_FILE, isolation_level=None, timeout=30)
-    conn.row_factory = sqlite3.Row
-    migrate(conn)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-
-def migrate(conn: sqlite3.Connection) -> None:
-    """Bring an existing database up to the current schema (idempotent, FK-safe).
-
-    Adds the immutable `uid` column (backfilling it) and the `links` table, and rebuilds `nodes`
-    when its CHECK predates the 'cancelled'/'review' statuses. Dependencies and notes are untouched
-    and re-resolve to the rebuilt table by name.
-    """
-    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='nodes'").fetchone()
-    if row is None:
-        return
-    sql = row[0] or ""
-    columns = [c[1] for c in conn.execute("PRAGMA table_info(nodes)")]
-    have_uid = "uid" in columns
-    needs_rebuild = "cancelled" not in sql or "review" not in sql
-
-    if needs_rebuild:
-        cols = ("id, uid, parent_id, position, level, title, description, status, reason, assignee, "
-                "goal, start, end, created, updated, started, finished")
-        select = cols if have_uid else cols.replace("uid, ", "'' AS uid, ")
-        conn.execute("PRAGMA foreign_keys = OFF")
-        try:
-            conn.execute("BEGIN")
-            conn.execute(NODES_V2_DDL)
-            conn.execute(f"INSERT INTO nodes_new ({cols}) SELECT {select} FROM nodes")
-            conn.execute("DROP TABLE nodes")
-            conn.execute("ALTER TABLE nodes_new RENAME TO nodes")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_assignee ON nodes(assignee)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id, position)")
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        finally:
-            conn.execute("PRAGMA foreign_keys = ON")
-    elif not have_uid:
-        conn.execute("ALTER TABLE nodes ADD COLUMN uid TEXT NOT NULL DEFAULT ''")
-
-    conn.execute("CREATE TABLE IF NOT EXISTS links ("
-                 "node_uid TEXT NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, created TEXT NOT NULL, "
-                 "PRIMARY KEY (node_uid, kind, value))")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_links_uid ON links(node_uid)")
-    conn.execute("CREATE TABLE IF NOT EXISTS events ("
-                 "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, "
-                 "action TEXT NOT NULL, node_uid TEXT NOT NULL DEFAULT '', field TEXT NOT NULL DEFAULT '', "
-                 "old TEXT NOT NULL DEFAULT '', new TEXT NOT NULL DEFAULT '')")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_node ON events(node_uid)")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_uid ON nodes(uid) WHERE uid <> ''")
-    _backfill_uids(conn)
-
-
-def _backfill_uids(conn: sqlite3.Connection) -> None:
-    """Give every node that has no uid a fresh unique one."""
-    rows = conn.execute("SELECT id FROM nodes WHERE uid = ''").fetchall()
-    if not rows:
-        return
-    existing = {r[0] for r in conn.execute("SELECT uid FROM nodes WHERE uid <> ''")}
-    conn.execute("BEGIN")
-    try:
-        for (node_id,) in rows:
-            uid = new_uid(conn)
-            while uid in existing:
-                uid = new_uid(conn)
-            existing.add(uid)
-            conn.execute("UPDATE nodes SET uid = ? WHERE id = ?", (uid, node_id))
-        conn.execute("COMMIT")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
+    return tasks_storage.connect(create, path=DATA_FILE, project=ROOT.name)
 
 
 def load(conn: sqlite3.Connection | None = None) -> dict:
-    """Build the in-memory tree (same shape the renderer and validator use) from the database."""
-    if conn is None and not DATA_FILE.exists():
-        return {"version": 2, "project": ROOT.name, "sprints": []}  # reading never creates the database
-    own = conn is None
-    conn = conn or connect()
-    try:
-        project = conn.execute("SELECT value FROM meta WHERE key = 'project'").fetchone()[0]
-        deps: dict[str, list[str]] = {}
-        for r in conn.execute("SELECT node_id, depends_on FROM deps ORDER BY depends_on"):
-            deps.setdefault(r["node_id"], []).append(r["depends_on"])
-        notes: dict[str, list[str]] = {}
-        for r in conn.execute("SELECT node_id, text FROM notes ORDER BY seq"):
-            notes.setdefault(r["node_id"], []).append(r["text"])
-        links: dict[str, list[dict]] = {}
-        for r in conn.execute("SELECT node_uid, kind, value, created FROM links ORDER BY created, kind, value"):
-            links.setdefault(r["node_uid"], []).append(
-                {"kind": r["kind"], "value": r["value"], "created": r["created"]})
-        by_id: dict[str, dict] = {}
-        sprints: list[dict] = []
-        for r in conn.execute("SELECT * FROM nodes ORDER BY level, parent_id, position"):
-            node = {k: r[k] for k in FIELDS}
-            node.update(depends_on=deps.get(r["id"], []), notes=notes.get(r["id"], []),
-                        links=links.get(r["uid"], []), children=[])
-            by_id[r["id"]] = node
-            (by_id[r["parent_id"]]["children"] if r["parent_id"] else sprints).append(node)
-        return {"version": 2, "project": project, "sprints": sprints}
-    finally:
-        if own:
-            conn.close()
+    return tasks_storage.load(conn, path=DATA_FILE, project=ROOT.name)
 
 
-class Locked:
-    """Exclusive lock so parallel agents cannot interleave a change and its re-render."""
-
-    def __enter__(self):
-        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = LOCK_FILE.open("w")
-        fcntl.flock(self._fh, fcntl.LOCK_EX)
-        return self
-
-    def __exit__(self, *exc):
-        fcntl.flock(self._fh, fcntl.LOCK_UN)
-        self._fh.close()
-
-
-# --------------------------------------------------------------------------- rendering
-
-def counts(nodes) -> dict:
-    result = {s: 0 for s in STATUSES}
-    for n in nodes:
-        result[n["status"]] += 1
-    return result
-
-
-def bar(done: int, total: int, width: int = 10) -> str:
-    filled = round(width * done / total) if total else 0
-    return "█" * filled + "░" * (width - filled)
-
-
-def render_node(node: dict, indent: int, lines: list[str]) -> None:
-    status = effective(node)
-    box = "x" if status == "done" else " "
-    parts = [f"{'  ' * indent}- [{box}] **{node['id']}** {node['title']} — {BADGE[status]}"]
-    if node["children"]:
-        d, t = progress(node)
-        parts.append(f"({d}/{t})")
-    if node["assignee"]:
-        parts.append(f"· @{node['assignee']}")
-    if node["depends_on"]:
-        parts.append("· after " + ", ".join(node["depends_on"]))
-    kinds = " · ".join(sorted({link["kind"] for link in node.get("links", [])}))
-    if kinds:
-        parts.append(f"· [{kinds}]")
-    lines.append(" ".join(parts))
-    pad = "  " * (indent + 1)
-    if status == "blocked" and node["reason"]:
-        lines.append(f"{pad}- ⛔ **Blocked:** {node['reason']}")
-    if node["description"]:
-        for text in node["description"].splitlines():
-            stripped = text.strip()
-            if not stripped:
-                continue
-            # Never double-prefix a line that is already a list item, and never emit a lone "-".
-            lines.append(f"{pad}{text}" if stripped.startswith(("- ", "* ")) else f"{pad}- {text}")
-    for note in node["notes"]:
-        lines.append(f"{pad}- 📝 {note}")
-    for child in node["children"]:
-        render_node(child, indent + 1, lines)
-
-
-def slugify(text: str) -> str:
-    """Lowercase kebab slug for a sprint file name; falls back to 'sprint'."""
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug or "sprint"
+class Locked(tasks_storage.Locked):
+    def __init__(self):
+        super().__init__(LOCK_FILE)
 
 
 def sprint_view_path(sprint: dict) -> Path:
-    """Path of the per-sprint detail file inside the view directory."""
-    return VIEW_DIR / f"sprint-{sprint['id']}-{slugify(sprint['title'])}.md"
-
-
-def _sprint_body(sprint: dict) -> list[str]:
-    """Body shared by the README's current sprint and the per-sprint file."""
-    d, t = progress(sprint)
-    lines: list[str] = []
-    if sprint.get("goal"):
-        lines += [f"**Goal:** {sprint['goal']}", ""]
-    lines += [f"Progress: {d}/{t} `{bar(d, t)}`", ""]
-    for note in sprint["notes"]:
-        lines.append(f"📝 {note}")
-    if sprint["notes"]:
-        lines.append("")
-    for task in sprint["children"]:
-        render_node(task, 0, lines)
-    lines.append("")
-    return lines
-
-
-def render_sprint_file(sprint: dict) -> str:
-    """The per-sprint detail file (`sprint-<n>-<slug>.md`)."""
-    lines = [f"# Sprint {sprint['id']} — {sprint['title']} {BADGE[effective(sprint)]}", ""]
-    lines += _sprint_body(sprint)
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def render_readme(data: dict) -> str:
-    """The view index: overall + the current sprint inline + links to the per-sprint files."""
-    sprints = data["sprints"]
-    all_leaves = [leaf for s in sprints for leaf in leaves(s)]
-    c = counts(all_leaves)
-    actionable = [leaf for leaf in all_leaves if leaf["status"] != "cancelled"]
-    done, total = c["done"], len(actionable)
-    pct = round(100 * done / total) if total else 0
-    lines = [
-        f"# Tasks — {data['project']}",
-        "",
-        "> Generated from `tasks/tasks.db` by `scripts/tasks.py` after every change. Do not edit by hand.",
-        "> Per-sprint detail lives in the `sprint-*.md` files next to this README.",
-        "",
-        f"**Overall:** {done}/{total} done ({pct}%) `{bar(done, total)}` · "
-        f"🔄 {c['in_progress']} in progress · ⛔ {c['blocked']} blocked · "
-        f"🚫 {c['cancelled']} cancelled · 🔎 {c['review']} review · ⬜ {c['none']} not started",
-        "",
-        "Status legend: ⬜ none (brak) · 🔄 in progress (w trakcie) · ⛔ blocked (bloker) · ✅ done (gotowe) · "
-        "🚫 cancelled (anulowane). Parent status is derived from its children: any blocked → blocked, "
-        "all done or cancelled → done, any started or finished → in progress, otherwise none.",
-        "",
-    ]
-    if sprints:
-        lines += ["## Sprints", ""]
-        for s in sprints:
-            d, t = progress(s)
-            lines.append(f"- [Sprint {s['id']} — {s['title']}]({sprint_view_path(s).name}) — "
-                         f"{BADGE[effective(s)]} `{bar(d, t)}` {d}/{t}")
-        lines.append("")
-    blockers = [n for s in sprints for n in leaves(s) if n["status"] == "blocked"]
-    if blockers:
-        lines += ["## ⛔ Blockers", ""]
-        lines += [f"- **{n['id']}** {n['title']} — {n['reason']}" for n in blockers]
-        lines.append("")
-    if not sprints:
-        lines += ["_No sprints yet. Start with `scripts/tasks.py add-sprint \"Title\"`._", ""]
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def render(data: dict) -> str:
-    """The main generated file: the README index (single-document entry point)."""
-    return render_readme(data)
+    return tasks_render.sprint_view_path(sprint, view_dir=VIEW_DIR)
 
 
 def expected_view(data: dict) -> dict:
-    """{path: text} for every generated view file (the README index + one file per sprint)."""
-    files = {README_FILE: render_readme(data)}
-    for s in data["sprints"]:
-        files[sprint_view_path(s)] = render_sprint_file(s)
-    return files
-
-
-def _testing_guard(target: Path) -> None:
-    """When VIBE_TASKS_TESTING=1, refuse to write a file that is not under a system temp dir.
-
-    This is a safety net so a missed setUp redirect in a test class cannot overwrite the
-    real tracker files in the main checkout.
-    """
-    if os.environ.get("VIBE_TASKS_TESTING") != "1":
-        return
-    import tempfile as _tf
-    tmp_dir = Path(_tf.gettempdir()).resolve()
-    try:
-        target.resolve().relative_to(tmp_dir)
-    except ValueError:
-        raise TaskError(f"refusing to write outside a temp dir while testing: {target}")
-
-
-def _write_atomic(target: Path, text: str) -> None:
-    """Write text to target atomically: a temp file in the same directory, then os.replace.
-
-    A reader (or the tasks_watch poller) never sees a truncated or half-written file, and a crash
-    mid-write leaves the previous content intact. Standard library only.
-    """
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=str(target.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, target)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    return tasks_render.expected_view(data, view_dir=VIEW_DIR, readme_file=README_FILE)
 
 
 def write_view(data: dict) -> None:
-    files = expected_view(data)
-    VIEW_DIR.mkdir(parents=True, exist_ok=True)
-    for path, text in files.items():
-        _testing_guard(path)
-        _write_atomic(path, text)
-    keep = {p.name for p in files}
-    for stale in VIEW_DIR.glob("sprint-*.md"):
-        if stale.name not in keep:
-            stale.unlink()
-
-
-def snapshot_json(data: dict) -> str:
-    """Deterministic JSON snapshot: sorted keys, 2-space indent, trailing newline, no timestamps."""
-    return json.dumps(data, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+    tasks_storage.write_view(data, view_dir=VIEW_DIR, readme_file=README_FILE)
 
 
 def write_snapshot(data: dict) -> None:
-    """Write the committed JSON snapshot file (tasks/tasks.snapshot.json)."""
-    _testing_guard(SNAPSHOT_FILE)
-    _write_atomic(SNAPSHOT_FILE, snapshot_json(data))
+    tasks_storage.write_snapshot(data, SNAPSHOT_FILE)
 
 
-# --------------------------------------------------------------------------- commands
-
-def _log_events(conn: sqlite3.Connection, before: dict, after: dict) -> None:
-    """Write one audit event per added/removed node and per changed field (inside the transaction)."""
-    when = now_iso()
-    who = actor()
-    action = CURRENT_ACTION or "change"
-    for node_id in sorted(set(before) | set(after)):
-        old_row = before.get(node_id)
-        new_row = after.get(node_id)
-        uid = (new_row or old_row)["uid"]
-        if old_row is None:
-            conn.execute("INSERT INTO events (ts,actor,action,node_uid,field,old,new) VALUES (?,?,?,?,?,?,?)",
-                         (when, who, f"{action}:add", uid, "", "", new_row["title"]))
-            continue
-        if new_row is None:
-            conn.execute("INSERT INTO events (ts,actor,action,node_uid,field,old,new) VALUES (?,?,?,?,?,?,?)",
-                         (when, who, f"{action}:remove", uid, "", old_row["title"], ""))
-            continue
-        for field in ("title", "description", "status", "reason", "assignee", "goal", "start", "end"):
-            if old_row[field] != new_row[field]:
-                conn.execute("INSERT INTO events (ts,actor,action,node_uid,field,old,new) VALUES (?,?,?,?,?,?,?)",
-                             (when, who, action, uid, field, old_row[field], new_row[field]))
+def _auto_backup(data: dict) -> None:
+    try:
+        _backup_commit(data, f"{CURRENT_ACTION or 'change'}: auto")
+    except Exception as exc:
+        print(f"warning: backup failed: {exc}", file=sys.stderr)
 
 
-def mutate(action):
-    """Run action(conn) in one transaction, validate the result, then commit and re-render.
-    Both the tasks/ view and the JSON snapshot are written after a successful commit; on rollback nothing is written."""
-    with Locked():
-        conn = connect()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                before = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM nodes")}
-                message = action(conn)
-                after = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM nodes")}
-                _log_events(conn, before, after)
-                data = load(conn)
-                validate(data)
-            except BaseException:
-                conn.execute("ROLLBACK")
-                raise
-            conn.execute("COMMIT")
-        finally:
-            conn.close()
-        write_view(data)
-        write_snapshot(data)
-        try:
-            _backup_commit(data, f"{CURRENT_ACTION or 'change'}: auto")
-        except Exception as exc:  # noqa: BLE001 - the backup must never break a change
-            print(f"warning: backup failed: {exc}", file=sys.stderr)
-    if message:
-        print(message)
-
-
-def row(conn: sqlite3.Connection, node_id: str) -> sqlite3.Row:
-    found = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
-    if found is None:
-        raise TaskError(f"no such id: {node_id}")
-    return found
-
-
-def row_by_key(conn: sqlite3.Connection, key: str) -> sqlite3.Row:
-    """Look a node up by its display id or its immutable uid."""
-    found = conn.execute("SELECT * FROM nodes WHERE id = ? OR uid = ?", (key, key)).fetchone()
-    if found is None:
-        raise TaskError(f"no such id: {key}")
-    return found
-
-
-def subtree_ids(conn: sqlite3.Connection, node_id: str) -> list[str]:
-    return [r[0] for r in conn.execute(
-        "SELECT id FROM nodes WHERE id = ? OR id LIKE ? ORDER BY level, position", (node_id, node_id + ".%"))]
-
-
-def subtree_rows(conn: sqlite3.Connection, node_id: str) -> list[sqlite3.Row]:
-    """Return all rows in the subtree (including the root) ordered by level, position."""
-    return list(conn.execute(
-        "SELECT * FROM nodes WHERE id = ? OR id LIKE ? ORDER BY level, position", (node_id, node_id + ".%")))
-
-
-def leaf_ids(conn: sqlite3.Connection, node_id: str) -> list[str]:
-    return [r[0] for r in conn.execute(
-        "SELECT id FROM nodes n WHERE (id = ? OR id LIKE ?) "
-        "AND NOT EXISTS (SELECT 1 FROM nodes c WHERE c.parent_id = n.id) ORDER BY level, position",
-        (node_id, node_id + ".%"))]
-
-
-def parse_ids(text: str | None) -> list[str]:
-    return [x for x in (text or "").replace(" ", "").split(",") if x]
-
-
-def set_deps(conn: sqlite3.Connection, node_id: str, deps: list[str]) -> None:
-    conn.execute("DELETE FROM deps WHERE node_id = ?", (node_id,))
-    for dep in dict.fromkeys(deps):
-        if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (dep,)).fetchone() is None:
-            raise TaskError(f"{node_id}: depends on unknown id {dep}")
-        conn.execute("INSERT INTO deps VALUES (?, ?)", (node_id, dep))
-
-
-def insert_node(conn: sqlite3.Connection, parent_id: str | None, title: str, **fields) -> str:
-    where, args = ("parent_id = ?", (parent_id,)) if parent_id else ("parent_id IS NULL", ())
-    position = conn.execute(f"SELECT COALESCE(MAX(position), 0) + 1 FROM nodes WHERE {where}", args).fetchone()[0]
-    node_id = f"{parent_id}.{position}" if parent_id else str(position)
-    uid = new_uid(conn)
-    values = {"description": "", "assignee": "", "goal": "", "start": "", "end": ""}
-    values.update({k: v for k, v in fields.items() if v is not None})
-    conn.execute(
-        "INSERT INTO nodes (id, uid, parent_id, position, level, title, description, assignee, goal, start, end, "
-        "created, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (node_id, uid, parent_id, position, depth(node_id), title, values["description"], values["assignee"],
-         values["goal"], values["start"], values["end"], today(), today()))
-    return node_id
-
-
-def set_leaf_status(conn: sqlite3.Connection, node_id: str, status: str, reason: str) -> None:
-    current = row(conn, node_id)
-    if status == "blocked" and not reason:
-        raise TaskError(f"{node_id}: use --reason to say what blocks it")
-    started = current["started"] or (today() if status == "in_progress" else "")
-    finished = today() if status == "done" else ("" if current["status"] == "done" else current["finished"])
-    conn.execute("UPDATE nodes SET status=?, reason=?, started=?, finished=?, updated=? WHERE id=?",
-                 (status, reason if status == "blocked" else "", started, finished, today(), node_id))
+def mutate(action) -> None:
+    tasks_storage.mutate(
+        action, action_name=CURRENT_ACTION or "change", connect_fn=connect, load_fn=load,
+        write_view_fn=write_view, write_snapshot_fn=write_snapshot,
+        lock_path=LOCK_FILE, after_commit=_auto_backup,
+    )
 
 
 def cmd_add_sprint(args):
@@ -768,7 +273,7 @@ def cmd_status(args):
 def _get_ids(args) -> list[str]:
     """Extract ids list from args, supporting both 'ids' (nargs='+') and 'id' (single)."""
     if hasattr(args, "ids") and args.ids:
-        return args.ids
+        return [str(value) for value in args.ids]
     if hasattr(args, "id") and args.id:
         return [args.id]
     raise TaskError("no id provided")
@@ -967,7 +472,7 @@ def _write_recovery(current: dict, ids: list[str], roots: list[str]) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     except OSError as exc:
-        raise TaskError(f"could not write recovery file {path}: {exc}")
+        raise TaskError(f"could not write recovery file {path}: {exc}") from exc
     return path
 
 
@@ -1039,7 +544,7 @@ def cmd_restore_removed(args):
     try:
         recovery = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise TaskError(f"could not read recovery file {path}: {exc}")
+        raise TaskError(f"could not read recovery file {path}: {exc}") from exc
     entries = recovery.get("removed")
     if not isinstance(entries, list) or not entries:
         raise TaskError(f"{path}: not a recovery file (missing 'removed' entries)")
@@ -1238,10 +743,6 @@ def cmd_mv(args):
         return "\n".join(lines)
 
     mutate(action)
-
-
-def ready(data: dict, node: dict) -> bool:
-    return all(effective(find(data, d)) == "done" for d in node["depends_on"])
 
 
 def cmd_next(args):
@@ -1609,7 +1110,7 @@ def cmd_backup(args):
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
         if _backup_git("init", "-q").returncode != 0:
             raise TaskError(f"cannot initialise the backup clone in {BACKUP_DIR}")
-        if _backup_git("remote", "add", "origin", BACKUP_REMOTE).returncode != 0:
+        if BACKUP_REMOTE and _backup_git("remote", "add", "origin", BACKUP_REMOTE).returncode != 0:
             raise TaskError(f"cannot add the backup remote {BACKUP_REMOTE}")
     message = args.message or f"{CURRENT_ACTION or 'backup'}: {now_iso()}"
     _backup_commit(data, message, push=args.push)
@@ -1633,7 +1134,7 @@ def cmd_restore(args):
 
 def cmd_import_plan(args):
     """Atomically import a plan by run id (delegates to tasks_plan_import)."""
-    import tasks_plan_import
+    from scripts import tasks_plan_import
     tasks_plan_import.cmd_import_plan(args)
 
 

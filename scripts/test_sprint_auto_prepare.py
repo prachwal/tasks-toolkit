@@ -12,18 +12,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import sprint_auto_prepare as sap
-import tasks
-import tasks_storage
-import tasks_plan_import as tpi
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import tasks, tasks_storage
 
 
 class PrepareTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        os.environ["VIBE_TASKS_ROOT"] = str(self.tmp)
+        os.environ["TASKS_ROOT"] = str(self.tmp)
         subprocess.run(
             [sys.executable, str(Path(__file__).resolve().parent / "tasks_init.py"),
              "--path", str(self.tmp / "tasks" / "tasks.db"), "--project", "T"],
@@ -35,12 +32,8 @@ class PrepareTests(unittest.TestCase):
         subprocess.run(["git", "config", "user.name", "t"], cwd=self.tmp, check=True)
         (self.tmp / "README.md").write_text("init")
         (self.tmp / ".gitignore").write_text("tmp/\ntasks/*.db\ntasks/.lock\ntasks/removed/\n")
-        # copy worktree.sh for branch creation
         scripts_dir = self.tmp / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
-        import shutil
-        shutil.copy(str(Path(__file__).resolve().parent.parent / "scripts" / "worktree.sh"), str(scripts_dir / "worktree.sh"))
-        shutil.copy(str(Path(__file__).resolve().parent.parent / "scripts" / "needs-dotnet-checks.sh"), str(scripts_dir / "needs-dotnet-checks.sh"))
         subprocess.run(["git", "add", "-A"], cwd=self.tmp, check=True)
         subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=self.tmp, check=True)
         self.root = self.tmp
@@ -66,8 +59,8 @@ class PrepareTests(unittest.TestCase):
 
     def tearDown(self):
         import shutil
-        if "VIBE_TASKS_ROOT" in os.environ:
-            del os.environ["VIBE_TASKS_ROOT"]
+        if "TASKS_ROOT" in os.environ:
+            del os.environ["TASKS_ROOT"]
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _run_prepare(self, run_name="run-1", plan_path=None, goal="Test goal"):

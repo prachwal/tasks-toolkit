@@ -12,8 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import sprint_auto_preflight as sap
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import sprint_auto_preflight as sap
 
 
 class TestCollectPreflight(unittest.TestCase):

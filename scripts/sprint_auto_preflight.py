@@ -33,7 +33,7 @@ GENERATED_PATHS = {
 }
 
 SAFE_DEFAULTS = {
-    "runner": "junie",
+    "runner": "codex",
     "serial": True,
     "fallback": "none",
     "retries": 0,
@@ -205,7 +205,7 @@ def collect_preflight(root: Path, request: dict, answers: dict | None = None) ->
     decision_map = {d.get("id"): d for d in decisions if isinstance(d, dict)}
 
     policy_items = [
-        ("runner", "Which runner to use?", "junie"),
+        ("runner", "Which runner to use?", "codex"),
         ("serial", "Run tasks serially?", True),
         ("fallback", "Fallback runner on failure?", "none"),
         ("retries", "Max retries per task?", 0),
@@ -249,7 +249,7 @@ def collect_preflight(root: Path, request: dict, answers: dict | None = None) ->
         "goal_reviewed": goal_reviewed,
         "allowed_scopes": allowed_scopes,
         "policy": policy,
-        "runner": policy.get("runner", "junie"),
+        "runner": policy.get("runner", "codex"),
         "serial": policy.get("serial", True),
         "fallback": policy.get("fallback", "none"),
         "push": policy.get("push", False),

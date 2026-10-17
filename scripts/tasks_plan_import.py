@@ -11,8 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import tasks  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import tasks  # noqa: E402
 
 
 def canonical_fingerprint(plan: dict) -> str:
@@ -29,7 +29,6 @@ def _validate_spec(spec_text: str, spec_path: Path) -> None:
     lint = Path(__file__).resolve().parent / "spec-lint.sh"
     if not lint.exists():
         return
-    env = dict(os.environ) if False else None
     import os
     env = {k: v for k, v in os.environ.items() if k != "SPEC_LINT"}
     r = subprocess.run(

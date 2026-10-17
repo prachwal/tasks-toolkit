@@ -5,7 +5,7 @@ redirected to a temp directory in setUp and restored in tearDown.  The constants
 are: DATA_FILE, VIEW_DIR, README_FILE, VIEW_FILE, LOCK_FILE, SNAPSHOT_FILE, RECOVERY_DIR — and any new ones added later.
 If a constant is missed, tests will silently overwrite the real tracker files in the
 main checkout, because tasks.py resolves ROOT to the main checkout from inside worktrees.
-The env var VIBE_TASKS_TESTING=1 (set below) provides a safety net in tasks.py that
+The env var TASKS_TESTING=1 (set below) provides a safety net in tasks.py that
 refuses to write outside a temp dir when testing.
 """
 import contextlib
@@ -21,11 +21,9 @@ from pathlib import Path
 from unittest import mock
 
 # Safety net: tasks.py checks this flag before any write operation.
-os.environ["VIBE_TASKS_TESTING"] = "1"
+os.environ["TASKS_TESTING"] = "1"
 
-import tasks
-import tasks_storage
-import tasks_render
+from scripts import tasks, tasks_render, tasks_storage
 
 
 class TasksTestCase(unittest.TestCase):
@@ -337,7 +335,7 @@ class InitTests(TasksTestCase):
         self.assertEqual(tasks.VIEW_FILE.read_text(encoding="utf-8"), "committed view")
 
     def test_init_script_creates_schema_and_does_not_overwrite(self):
-        import tasks_init
+        from scripts import tasks_init
         target = Path(self.tmp.name) / "fresh" / "x.db"
         self.assertEqual(tasks_init.main(["--path", str(target), "--project", "P"]), 0)
         self.assertEqual(tasks_init.main(["--path", str(target)]), 1)  # exists, no --force
@@ -809,7 +807,7 @@ class RootResolutionTests(unittest.TestCase):
         import subprocess
         import sys
         run = subprocess.run([sys.executable, str(deep / "scripts" / "tasks.py"), "add-sprint", "From worktree"],
-                             capture_output=True, text=True, env={"PATH": __import__("os").environ["PATH"]})
+                             capture_output=True, text=True, cwd=deep, env={"PATH": __import__("os").environ["PATH"]})
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertTrue((self.main / "tasks" / "tasks.db").exists())
         self.assertTrue((self.main / "tasks" / "README.md").exists())
@@ -826,8 +824,8 @@ class RootResolutionTests(unittest.TestCase):
 
     def test_environment_override_wins(self):
         import os
-        os.environ["VIBE_TASKS_ROOT"] = str(self.main)
-        self.addCleanup(os.environ.pop, "VIBE_TASKS_ROOT", None)
+        os.environ["TASKS_ROOT"] = str(self.main)
+        self.addCleanup(os.environ.pop, "TASKS_ROOT", None)
         self.assertEqual(tasks.tasks_init.resolve_root(Path("/")), self.main)
 
 
@@ -1015,9 +1013,8 @@ class AtomicWriteTests(TasksTestCase):
     def test_failed_replace_keeps_previous_content(self):
         self.ok("add-sprint", "S")
         before = tasks.VIEW_FILE.read_text(encoding="utf-8")
-        with mock.patch.object(tasks.os, "replace", side_effect=OSError("boom")):
-            with self.assertRaises(OSError):
-                tasks.write_view(tasks.load())
+        with mock.patch.object(tasks.os, "replace", side_effect=OSError("boom")), self.assertRaises(OSError):
+            tasks.write_view(tasks.load())
         self.assertEqual(tasks.VIEW_FILE.read_text(encoding="utf-8"), before)
         self.assertEqual(list(tasks.VIEW_FILE.parent.glob("*.tmp")), [])
 
@@ -1204,9 +1201,9 @@ class AuditLogTests(TasksTestCase):
         self.ok("link", "1.2", "commit", "abc")
         self.assertIn("commit", self.ok("log", "1.2"))
 
-    def test_vibe_actor_is_recorded(self):
-        os.environ["VIBE_ACTOR"] = "tester"
-        self.addCleanup(os.environ.pop, "VIBE_ACTOR", None)
+    def test_tasks_actor_is_recorded(self):
+        os.environ["TASKS_ACTOR"] = "tester"
+        self.addCleanup(os.environ.pop, "TASKS_ACTOR", None)
         self.build()
         self.ok("start", "1.1.1")
         self.assertIn("tester", self.ok("log", "1.1.1"))
@@ -1344,7 +1341,7 @@ class BackupTests(TasksTestCase):
         self.assertNotIn("Task A", out)
 
 
-class Task3_9Tests(TasksTestCase):
+class TaskRemovalTests(TasksTestCase):
     """Tests for Task 3.9: TASKS.md is git-ignored; check regenerates it when missing."""
 
     def test_check_regenerates_missing_tasks_md(self):
