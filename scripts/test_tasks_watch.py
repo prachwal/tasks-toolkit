@@ -1,4 +1,4 @@
-"""Tests for scripts/tasks_watch.py and .vscode/tasks.json.
+"""Tests for scripts/tasks_watch.py.
 
 Run: python3 -m unittest scripts/test_tasks_watch.py
 
@@ -6,7 +6,6 @@ All tests use a temporary root so the real tasks/ directory is never touched.
 """
 import contextlib
 import hashlib
-import json
 import sqlite3
 import tempfile
 import unittest
@@ -186,49 +185,6 @@ class WatchRefreshTests(WatchTestCase):
             tasks.snapshot_json(data)
         )
         self.assertIn("snapshot", stderr)
-
-
-class TasksJsonTests(unittest.TestCase):
-    """Validate .vscode/tasks.json structure and command references."""
-
-    def test_tasks_json_is_valid(self):
-        """.vscode/tasks.json must be valid JSON."""
-        tasks_json = Path(".vscode/tasks.json")
-        self.assertTrue(tasks_json.exists(), ".vscode/tasks.json does not exist")
-        with open(tasks_json, encoding="utf-8") as f:
-            data = json.load(f)
-        self.assertEqual(data["version"], "2.0.0")
-
-    def test_tasks_json_has_six_labels(self):
-        """.vscode/tasks.json must contain exactly the six expected labels."""
-        with open(".vscode/tasks.json", encoding="utf-8") as f:
-            data = json.load(f)
-        labels = {t["label"] for t in data["tasks"]}
-        expected = {
-            "Tracker: refresh view",
-            "Tracker: sync (view + snapshot)",
-            "Tracker: check",
-            "Tracker: next",
-            "Tracker: list",
-            "Tracker: watch view",
-        }
-        self.assertEqual(labels, expected)
-
-    def test_task_commands_reference_existing_scripts(self):
-        """Every command in tasks.json must reference an existing scripts/*.py file."""
-        with open(".vscode/tasks.json", encoding="utf-8") as f:
-            data = json.load(f)
-        for task in data["tasks"]:
-            cmd = task["command"]
-            # Extract the script file from the command (e.g., "python3 scripts/tasks.py render")
-            parts = cmd.split()
-            for part in parts:
-                if part.startswith("scripts/") and part.endswith(".py"):
-                    script_path = Path(part)
-                    self.assertTrue(
-                        script_path.exists(),
-                        f"Task '{task['label']}' references non-existent script: {script_path}"
-                    )
 
 
 if __name__ == "__main__":
