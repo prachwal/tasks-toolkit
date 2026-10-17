@@ -18,6 +18,23 @@ tasks-init
 tasks overview
 ```
 
+### Run with uvx
+
+With [uv installed](https://docs.astral.sh/uv/getting-started/installation/),
+run commands directly from PyPI without a separate tool installation:
+
+```bash
+cd /path/to/your-project
+uvx --from tasks-toolkit tasks-init
+uvx --from tasks-toolkit tasks overview
+uvx --from tasks-toolkit tasks next
+```
+
+Use `--from tasks-toolkit` because the package and executable names differ.
+The same form works for `tasks-run`, `tasks-sprint`, and `tasks-mcp`.
+To select a specific release, use `--from tasks-toolkit==0.1.6`.
+See the [uv tools guide](https://docs.astral.sh/uv/guides/tools/).
+
 ### From source
 
 ```bash
@@ -59,6 +76,25 @@ to the absolute path of the project whose tasks you want to manage. It points to
 the project, not to the toolkit installation. An installed server needs no copy of
 this source repository. Use an absolute executable path if the client cannot find
 `tasks-mcp` on its PATH; `command -v tasks-mcp` shows it on Unix.
+
+To launch the MCP server through `uvx`, use the following configuration in clients
+with an `mcpServers` section (such as Claude Desktop or Cursor):
+
+```json
+{
+  "mcpServers": {
+    "tasks": {
+      "command": "uvx",
+      "args": ["--from", "tasks-toolkit", "tasks-mcp"],
+      "env": {"TASKS_ROOT": "/absolute/path/to/your-project"}
+    }
+  }
+}
+```
+
+Use the absolute path returned by `command -v uvx` if the client cannot find `uvx`.
+For the other client schemas below, use the same executable and arguments with
+the client's configuration keys.
 
 ### Claude Desktop
 
