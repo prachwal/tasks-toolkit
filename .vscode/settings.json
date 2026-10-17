@@ -1,0 +1,8 @@
+{
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": true,
+    "python.testing.unittestArgs": [
+        "-s", "scripts",
+        "-p", "test_*.py"
+    ]
+}
