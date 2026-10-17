@@ -187,6 +187,14 @@ If no default is configured, select a runner explicitly. `--fallback NAME` uses
 the same registry; `none` is reserved to disable fallback. Reports and statistics
 accept any runner name containing letters, digits, underscores and hyphens.
 
+Optional `protected_paths` adds project-specific files or directories to the built-in
+protection, for example `"protected_paths": ["config/private/", "./credentials.json"]`.
+Entries are relative to the project root; `./` and trailing separators are normalized.
+Absolute paths and entries containing `..` are rejected. Directory entries protect
+the directory and its descendants. Planner commands resolve the project using the
+same current-directory, Git-worktree and `TASKS_ROOT` rules as the tracker; their
+helper scripts are loaded from the toolkit installation.
+
 When upgrading from 0.1.4, register the command you previously relied on explicitly:
 implicit provider commands and the implicit default have been removed. Existing
 checkpoint and report runner names remain valid when registered in the configuration.
