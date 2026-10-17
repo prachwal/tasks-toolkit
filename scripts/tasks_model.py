@@ -7,7 +7,6 @@ from __future__ import annotations
 import datetime as dt
 import secrets
 import sqlite3
-from pathlib import Path
 from typing import Any
 
 STATUSES = ("none", "in_progress", "blocked", "done", "cancelled", "review")
@@ -47,9 +46,9 @@ def now_iso() -> str:
 
 
 def actor() -> str:
-    """Whoever is making the change: $VIBE_ACTOR, else $USER, else 'unknown'."""
+    """Whoever is making the change: $TASKS_ACTOR, else $USER, else 'unknown'."""
     import os
-    return os.environ.get("VIBE_ACTOR") or os.environ.get("USER") or "unknown"
+    return os.environ.get("TASKS_ACTOR") or os.environ.get("USER") or "unknown"
 
 
 def new_uid(conn: sqlite3.Connection | None = None) -> str:
@@ -113,7 +112,7 @@ def depth(node_id: str) -> int:
 def effective(node: dict[str, Any]) -> str:
     """Status of a node: stored for leaves, derived from children otherwise."""
     if not node["children"]:
-        return node["status"]
+        return str(node["status"])
     states = [effective(c) for c in node["children"]]
     if "blocked" in states:
         return "blocked"
@@ -157,8 +156,8 @@ def normalize_status(value: str) -> str:
     """Normalize a status string to canonical form."""
     try:
         return ALIASES[value.strip().lower()]
-    except KeyError:
-        raise TaskError(f"unknown status '{value}' (use: none/brak, in_progress/w-trakcie, blocked/bloker, done/gotowe)")
+    except KeyError as exc:
+        raise TaskError(f"unknown status '{value}' (use: none/brak, in_progress/w-trakcie, blocked/bloker, done/gotowe)") from exc
 
 
 def ready(data: dict[str, Any], node: dict[str, Any]) -> bool:
@@ -171,3 +170,52 @@ def ready(data: dict[str, Any], node: dict[str, Any]) -> bool:
         except TaskError:
             return False
     return True
+
+
+LINK_KINDS = ("spec", "patch", "runner", "model", "agent", "commit", "branch", "fixes", "scope")
+
+def validate(data: dict) -> None:
+    seen: set[str] = set()
+    uids: set[str] = set()
+    ids = {n["id"] for n in walk(data["sprints"])}
+    for node in walk(data["sprints"]):
+        nid = node["id"]
+        if nid in seen:
+            raise TaskError(f"duplicate id {nid}")
+        seen.add(nid)
+        uid = node.get("uid", "")
+        if not uid:
+            raise TaskError(f"{nid}: missing uid")
+        if uid in uids:
+            raise TaskError(f"duplicate uid {uid}")
+        uids.add(uid)
+        for link in node.get("links", []):
+            if link["kind"] not in LINK_KINDS:
+                raise TaskError(f"{nid}: unknown link kind {link['kind']}")
+        if depth(nid) > MAX_DEPTH:
+            raise TaskError(f"{nid}: nesting deeper than sprint > task > subtask is not allowed")
+        if node["status"] not in STATUSES:
+            raise TaskError(f"{nid}: invalid status {node['status']}")
+        if not node["children"] and node["status"] == "blocked" and not node["reason"]:
+            raise TaskError(f"{nid}: a blocked item needs a reason")
+        for dep in node["depends_on"]:
+            if dep not in ids:
+                raise TaskError(f"{nid}: depends on unknown id {dep}")
+            if dep == nid or dep.startswith(nid + ".") or nid.startswith(dep + "."):
+                raise TaskError(f"{nid}: cannot depend on its own ancestor/descendant {dep}")
+    # dependency cycles
+    graph = {n["id"]: n["depends_on"] for n in walk(data["sprints"])}
+    state: dict[str, int] = {}
+
+    def visit(n: str, path: list[str]) -> None:
+        if state.get(n) == 2:
+            return
+        if state.get(n) == 1:
+            raise TaskError("dependency cycle: " + " -> ".join(path + [n]))
+        state[n] = 1
+        for dep in graph[n]:
+            visit(dep, path + [n])
+        state[n] = 2
+
+    for n in graph:
+        visit(n, [])

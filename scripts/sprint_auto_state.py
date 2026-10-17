@@ -5,14 +5,14 @@ exclusive lock.  Importing this module writes nothing.
 """
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
 import signal
 import subprocess
-import sys
 import tempfile
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 STATE_VERSION = 1
@@ -29,10 +29,11 @@ class RunState:
     answers_fingerprint: str = ""
     allowed_scopes: list = field(default_factory=list)
     initial_main_sha: str = ""
-    runner: str = "junie"
+    runner: str = "codex"
     model: str = ""
     timeout: int = 120
     plan_fingerprint: str = ""
+    config_fingerprint: str = ""
     spec_fingerprints: dict = field(default_factory=dict)
     tracker_uids: dict = field(default_factory=dict)
     expected_refs: dict = field(default_factory=dict)
@@ -40,6 +41,7 @@ class RunState:
     operation_intent: str = ""
     command_results: list = field(default_factory=list)
     verified_commit: str = ""
+    completed_tasks: dict = field(default_factory=dict)
     child_pid: int = 0
     child_pgid: int = 0
     heartbeat_ts: str = ""
@@ -48,7 +50,7 @@ class RunState:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "RunState":
+    def from_dict(cls, data: dict) -> RunState:
         if data.get("version") != STATE_VERSION:
             raise ValueError(f"unknown state version: {data.get('version')}")
         known = {f.name for f in cls.__dataclass_fields__.values()}
@@ -106,10 +108,8 @@ def write_checkpoint(path: Path, state: RunState) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp, path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
@@ -140,37 +140,44 @@ def is_child_alive(state: RunState) -> bool:
 
 
 def supervised_run(cmd: list[str], cwd: Path, timeout: int,
-                   on_output=None) -> tuple[int, str]:
-    """Run a command in its own process group.  Returns (exit_code, combined_output).
-
-    Diagnostics go to stderr (captured separately); result stdout is clean.
-    Forwards SIGTERM/SIGINT to the child process group.
-    """
+                   on_output=None, input_text: str | None = None) -> tuple[int, str]:
+    """Run with a deadline, forwarding termination to the entire child group."""
     proc = subprocess.Popen(
-        cmd, cwd=str(cwd),
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        start_new_session=True,
+        cmd, cwd=str(cwd), stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
     )
-    pgid = proc.pid
+    previous = {}
+
+    def forward(signum, frame):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signum)
+
+    # Signals can only be installed in the main thread.
+    import threading
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous[signum] = signal.signal(signum, forward)
+    timed_out = False
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
         try:
-            os.killpg(pgid, signal.SIGTERM)
-        except (OSError, ProcessLookupError):
-            pass
-        try:
-            stdout, stderr = proc.communicate(timeout=10)
+            stdout, _ = proc.communicate(input_text.encode() if input_text is not None else None, timeout=timeout)
         except subprocess.TimeoutExpired:
+            timed_out = True
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGTERM)
             try:
-                os.killpg(pgid, signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                pass
-            stdout, stderr = proc.communicate()
+                stdout, _ = proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                stdout, _ = proc.communicate()
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
     output = stdout.decode("utf-8", errors="replace")
-    if stderr:
-        sys.stderr.write(stderr.decode("utf-8", errors="replace"))
-    return proc.returncode, output
+    if on_output:
+        on_output(output)
+    return (124 if timed_out else proc.returncode), output
 
 
 def bind_state(root: Path, git_common: Path, run_name: str, goal: str,

@@ -6,16 +6,16 @@ atomic tracker import and creation/reconciliation of its exact sprint branch.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import sprint_auto_preflight as sap
-import sprint_auto_state as sas
-import tasks  # noqa: E402
-import tasks_plan_import as tpi  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import sprint_auto_preflight as sap
+from scripts import sprint_auto_state as sas
+from scripts import tasks  # noqa: E402
+from scripts import tasks_plan_import as tpi
+from scripts.task_runner import scope_conformity as check_scope_conformity  # noqa: E402
 
 RUNNER_DEFAULT = "codex"
 
@@ -34,6 +34,12 @@ def _main_sha(root: Path) -> str:
 
 def prepare_run(root: Path, request: dict, answers: dict, run_name: str,
                 plan_path: Path | None = None) -> dict:
+    with tasks.using_root(root):
+        return _prepare_run(root, request, answers, run_name, plan_path)
+
+
+def _prepare_run(root: Path, request: dict, answers: dict, run_name: str,
+                plan_path: Path | None = None) -> dict:
     """Prepare a run: preflight recheck, plan, import, branch.
 
     Returns a dict with keys: status, preflight, state, plan, import_receipt, branch.
@@ -41,6 +47,9 @@ def prepare_run(root: Path, request: dict, answers: dict, run_name: str,
     """
     root = Path(root).resolve()
     result: dict = {"status": "started", "run_name": run_name}
+
+    if sas.state_path(root, run_name).exists():
+        return {"status": "run_exists", "message": "checkpoint exists; use sprint-auto.sh --resume"}
 
     # 1. Preflight recheck (read-only, no writes)
     preflight = sap.collect_preflight(root, request, answers)
@@ -71,7 +80,7 @@ def prepare_run(root: Path, request: dict, answers: dict, run_name: str,
         state = sas.bind_state(
             root, git_common, run_name, request.get("goal", ""),
             answers_fp, answers.get("allowed_scopes", []),
-            main_sha, RUNNER_DEFAULT, "", 120,
+            main_sha, answers.get("policy", {}).get("runner", RUNNER_DEFAULT), "", 120,
         )
         state.plan_fingerprint = ""
         result["state"] = state.to_dict()
@@ -81,13 +90,11 @@ def prepare_run(root: Path, request: dict, answers: dict, run_name: str,
             plan = json.loads(Path(plan_path).read_text())
         else:
             # Fresh planning attempt — invoke plan-sprint.sh
-            slug = run_name.lower().replace(" ", "-")
-            goal = request.get("goal", "")
             plan_file = root / "tmp" / "plans" / f"{run_name}.json"
             if not plan_file.exists():
                 # No existing plan — would invoke planner here
                 result["status"] = "needs_plan"
-                result["message"] = "No plan found; run plan-sprint.sh first"
+                result["message"] = "No plan found; supply --plan with a validated sprint plan"
                 return result
             plan = json.loads(plan_file.read_text())
 
@@ -132,9 +139,15 @@ def prepare_run(root: Path, request: dict, answers: dict, run_name: str,
             keys.add(key)
             # spec_name format
             spec_name = t.get("spec_name", "")
-            if spec_name and not re.match(r"^[a-z0-9][a-z0-9-]*$", spec_name):
+            if not isinstance(spec_name, str) or not re.fullmatch(r"^[a-z0-9][a-z0-9-]*$", spec_name):
                 result["status"] = "invalid_plan"
                 result["message"] = f"invalid spec_name: {spec_name!r}"
+                return result
+            if not isinstance(t.get("spec"), str) or not t["spec"].strip():
+                result.update(status="invalid_plan", message=f"task {key} needs spec text")
+                return result
+            if not isinstance(t.get("scope"), list) or not t["scope"]:
+                result.update(status="invalid_plan", message=f"task {key} needs at least one scope")
                 return result
             # scope validation: no forbidden paths, no generated tracker paths
             for scope in t.get("scope", []):
@@ -183,7 +196,7 @@ def prepare_run(root: Path, request: dict, answers: dict, run_name: str,
         allowed = set(answers.get("allowed_scopes", []))
         for t in plan.get("tasks", []):
             for scope in t.get("scope", []):
-                if allowed and not any(scope.startswith(a) or a.startswith(scope) for a in allowed):
+                if allowed and not check_scope_conformity([scope], list(allowed))[0]:
                     result["status"] = "scope_violation"
                     result["message"] = f"scope {scope!r} not in allowed scopes"
                     return result
@@ -227,10 +240,9 @@ def prepare_run(root: Path, request: dict, answers: dict, run_name: str,
                 result["message"] = f"branch {branch_name} does not descend from approved main SHA"
                 return result
         else:
-            # Create new branch from approved main SHA
+            # Create new branch from approved main SHA (plain git; worktree.sh removed)
             create_result = subprocess.run(
-                ["bash", str(root / "scripts" / "worktree.sh"), "sprint", "start",
-                 str(sprint_n), slug, "--from", main_sha],
+                ["git", "branch", branch_name, main_sha],
                 capture_output=True, text=True, cwd=str(root),
             )
             if create_result.returncode != 0:
@@ -240,6 +252,7 @@ def prepare_run(root: Path, request: dict, answers: dict, run_name: str,
             result["branch"] = {"name": branch_name, "action": "created", "sha": main_sha}
 
         # Write checkpoint
+        state.expected_refs = {"sprint_branch": branch_name, "sprint_sha": result["branch"]["sha"]}
         sas.write_checkpoint(sas.state_path(root, run_name), state)
         result["status"] = "prepared"
         return result
@@ -264,7 +277,7 @@ def main() -> int:
         return 4 if "blocked" in result["status"] else 2
     if result["status"] in ("needs_plan", "invalid_plan", "scope_violation"):
         return 1
-    return 0
+    return 0 if result["status"] == "prepared" else 1
 
 
 if __name__ == "__main__":

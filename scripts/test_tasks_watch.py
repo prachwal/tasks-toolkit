@@ -7,16 +7,13 @@ All tests use a temporary root so the real tasks/ directory is never touched.
 import contextlib
 import hashlib
 import json
-import os
-import shutil
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
-import tasks
-import tasks_storage
-import tasks_render
+from scripts import tasks, tasks_render, tasks_storage
+
 
 def _file_hash(path: Path) -> str:
     """SHA-256 hex digest of a file, or '' if it doesn't exist."""
@@ -105,7 +102,7 @@ class WatchTestCase(unittest.TestCase):
 
     def _run_watch(self, *extra_args):
         """Run tasks_watch.main with --once and return (stdout, stderr)."""
-        import tasks_watch
+        from scripts import tasks_watch
         out, err = contextlib.redirect_stdout, contextlib.redirect_stderr
         import io
         stdout = io.StringIO()
@@ -221,7 +218,6 @@ class TasksJsonTests(unittest.TestCase):
         """Every command in tasks.json must reference an existing scripts/*.py file."""
         with open(".vscode/tasks.json", encoding="utf-8") as f:
             data = json.load(f)
-        scripts_dir = Path("scripts")
         for task in data["tasks"]:
             cmd = task["command"]
             # Extract the script file from the command (e.g., "python3 scripts/tasks.py render")

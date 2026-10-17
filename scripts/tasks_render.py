@@ -6,18 +6,14 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
-# Import from tasks_model and tasks_storage
-import sys as _sys
-_sys.path.insert(0, str(Path(__file__).resolve().parent))
-from tasks_model import *  # noqa: E402, F401, F403
-from tasks_storage import *  # noqa: E402, F401, F403
+from scripts.tasks_model import BADGE, STATUSES, effective, leaves, progress
+from scripts.tasks_storage import README_FILE, VIEW_DIR
 
 
 def counts(nodes) -> dict[str, int]:
     """Count nodes by status."""
-    result = {s: 0 for s in STATUSES}
+    result = dict.fromkeys(STATUSES, 0)
     for n in nodes:
         result[n["status"]] += 1
     return result
@@ -66,9 +62,9 @@ def slugify(text: str) -> str:
     return slug or "sprint"
 
 
-def sprint_view_path(sprint: dict) -> Path:
+def sprint_view_path(sprint: dict, *, view_dir: Path | None = None) -> Path:
     """Path of the per-sprint detail file inside the view directory."""
-    return VIEW_DIR / f"sprint-{sprint['id']}-{slugify(sprint['title'])}.md"
+    return (view_dir if view_dir is not None else VIEW_DIR) / f"sprint-{sprint['id']}-{slugify(sprint['title'])}.md"
 
 
 def _sprint_body(sprint: dict) -> list[str]:
@@ -140,9 +136,9 @@ def render(data: dict) -> str:
     return render_readme(data)
 
 
-def expected_view(data: dict) -> dict:
+def expected_view(data: dict, *, view_dir: Path | None = None, readme_file: Path | None = None) -> dict:
     """{path: text} for every generated view file (the README index + one file per sprint)."""
-    files = {README_FILE: render_readme(data)}
+    files = {readme_file if readme_file is not None else README_FILE: render_readme(data)}
     for s in data["sprints"]:
-        files[sprint_view_path(s)] = render_sprint_file(s)
+        files[sprint_view_path(s, view_dir=view_dir)] = render_sprint_file(s)
     return files

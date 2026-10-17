@@ -5,8 +5,6 @@ Run: PYTHONPATH=scripts python3 -m unittest test_sprint_auto_state
 from __future__ import annotations
 
 import json
-import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -14,8 +12,8 @@ import time
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import sprint_auto_state as sas
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import sprint_auto_state as sas
 
 
 class StateTests(unittest.TestCase):
@@ -67,21 +65,15 @@ class StateTests(unittest.TestCase):
         target.write_text("")
         link = self.tmp / "link.lock"
         link.symlink_to(target)
-        with self.assertRaises(ValueError):
-            with sas.StateLock(link):
-                pass
+        with self.assertRaises(ValueError), sas.StateLock(link):
+            pass
 
     def test_exclusive_lock(self):
         lock = self.tmp / "test.lock"
-        with sas.StateLock(lock):
-            # second acquire should block; use non-blocking
-            fh = open(lock, "w")
-            try:
-                fcntl_import = __import__("fcntl")
-                with self.assertRaises((BlockingIOError, OSError)):
-                    fcntl_import.flock(fh, fcntl_import.LOCK_EX | fcntl_import.LOCK_NB)
-            finally:
-                fh.close()
+        with sas.StateLock(lock), open(lock, "w") as fh:
+            fcntl_import = __import__("fcntl")
+            with self.assertRaises((BlockingIOError, OSError)):
+                fcntl_import.flock(fh, fcntl_import.LOCK_EX | fcntl_import.LOCK_NB)
 
     def test_child_alive_false_no_pid(self):
         st = sas.RunState(child_pid=0)
@@ -130,15 +122,9 @@ class StateTests(unittest.TestCase):
         # child should be alive and holding lock
         self.assertTrue(sas.is_child_alive(sas.RunState(child_pid=proc.pid)))
         # try to acquire lock non-blocking -> should fail
-        fh = open(lock, "w")
         import fcntl
-        try:
+        with open(lock, "w") as fh, self.assertRaises((BlockingIOError, OSError)):
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.fail("lock not held by child")
-        except (BlockingIOError, OSError):
-            pass
-        finally:
-            fh.close()
         proc.kill()
         proc.wait()
 

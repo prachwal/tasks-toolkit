@@ -5,8 +5,8 @@ import sys
 import unittest
 from pathlib import Path
 
-import tasks_mcp
-from test_tasks import TasksTestCase
+from scripts import tasks_mcp
+from scripts.test_tasks import TasksTestCase
 
 
 class McpTests(TasksTestCase):
@@ -110,7 +110,7 @@ class McpTests(TasksTestCase):
         self.assertIsNotNone(tasks_find(self, "1.2"))
         text, error = self.call("tasks_remove", id="1.2", confirm=True)
         self.assertFalse(error, text)
-        import tasks as tasks_module
+        from scripts import tasks as tasks_module
         with self.assertRaises(tasks_module.TaskError):
             tasks_module.find(tasks_module.load(), "1.2")
 
@@ -225,7 +225,7 @@ class McpTests(TasksTestCase):
 
 
 def tasks_find(case, node_id):
-    import tasks
+    from scripts import tasks
     return tasks.find(tasks.load(), node_id)
 
 

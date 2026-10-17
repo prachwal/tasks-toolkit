@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Writes the machine-readable run summary for the delegation runners.
 
-Called by scripts/junie-task.sh, scripts/kilo-task.sh and scripts/codex-task.sh when a run finishes. Writes one
+Called by the runner scripts when a run finishes. Writes one
 JSON object to <outfile> describing the run (identity, timing, exits and verdict), so
-scripts/junie-status.sh and other tools can report on finished runs without parsing logs.
+Finished runs can be inspected via their summary.json files.
 Standard library only. The runners pass the values as key=value arguments, so bash never
 quotes them itself and odd values (spaces, special characters) cannot break the output.
 
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import Any
 
 STR_FIELDS = ("name", "runner", "model", "agent", "task_id", "patch", "verdict")
 INT_FIELDS = ("started", "finished", "agent_exit", "verify_exit", "files_changed")
@@ -38,7 +39,7 @@ def main(argv: list[str]) -> int:
         return 2
     outfile = argv[1]
 
-    data: dict[str, object] = {}
+    data: dict[str, Any] = {}
     for pair in argv[2:]:
         key, sep, value = pair.partition("=")
         if not sep:
@@ -75,11 +76,11 @@ def main(argv: list[str]) -> int:
         print("error: field 'agent' is only allowed for runner=kilo", file=sys.stderr)
         return 2
 
-    duration = int(data["finished"]) - int(data["started"])  # type: ignore[arg-type]
+    duration = int(data["finished"]) - int(data["started"])
     if duration < 0:
         print("error: finished is before started", file=sys.stderr)
         return 2
-    if int(data["files_changed"]) < 0:  # type: ignore[arg-type]
+    if int(data["files_changed"]) < 0:
         print("error: files_changed must be >= 0", file=sys.stderr)
         return 2
     data["duration_s"] = duration

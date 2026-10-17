@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sprint plan tooling for the Kilo planner agent (see knowledge/local-planner-design.md).
+"""Sprint plan tooling for the Kilo planner agent.
 
   sprint_plan.py extract  <raw.txt> <plan.json>   pull the JSON plan out of the model's answer
   sprint_plan.py validate <plan.json> [--no-lint] [--specs-written] schema, flow rules and spec-lint; errors on stderr, exit 4

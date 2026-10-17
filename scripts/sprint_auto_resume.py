@@ -10,8 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import sprint_auto_state as sas
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import sprint_auto_state as sas
 
 
 def _run_git(root: Path, *args: str) -> str:
@@ -32,8 +32,8 @@ def reconcile_checkpoint(root: Path, run_name: str) -> dict:
     if state is None:
         return {"status": "no_checkpoint", "actions": ["create new state"]}
 
-    actions = []
-    result = {"state": state.to_dict(), "actions": actions}
+    actions: list[str] = []
+    result: dict = {"state": state.to_dict(), "actions": actions}
 
     # Check child process
     child_alive = sas.is_child_alive(state)
@@ -87,7 +87,7 @@ def reconcile_checkpoint(root: Path, run_name: str) -> dict:
         if expected_sprint:
             actual = _run_git(root, "rev-parse", sprint_branch or "main")
             if actual and actual != expected_sprint and not merge_exists:
-                actions.append("WARNING: sprint ref mismatch — expected %s got %s" % (expected_sprint[:8], actual[:8]))
+                actions.append(f"WARNING: sprint ref mismatch — expected {expected_sprint[:8]} got {actual[:8]}")
 
     result["status"] = "reconciled"
     return result
@@ -100,12 +100,14 @@ def finish_guard(root: Path, run_name: str, expected_sprint_sha: str,
     Returns (ok, reason).
     """
     root = Path(root).resolve()
-    sprint_sha = _run_git(root, "rev-parse", "main")  # after merge, main should have sprint
-    if expected_main_sha and sprint_sha != expected_main_sha:
-        # main moved — check if it's the sprint merge
-        merge_base = _run_git(root, "merge-base", "main", expected_sprint_sha) if expected_sprint_sha else ""
-        if merge_base != expected_sprint_sha:
-            return False, f"main ref mismatch: expected merge of {expected_sprint_sha[:8]}"
+    actual = _run_git(root, "rev-parse", "main")
+    if not actual or not expected_sprint_sha or not expected_main_sha:
+        return False, "main and both expected refs are required"
+    if actual != expected_main_sha:
+        return False, "main ref changed"
+    merge_base = _run_git(root, "merge-base", "main", expected_sprint_sha)
+    if merge_base != expected_sprint_sha:
+        return False, "verified sprint commit is not on main"
     return True, "finish guard passed"
 
 

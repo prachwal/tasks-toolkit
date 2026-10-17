@@ -20,11 +20,11 @@ def resolve_root(start: Path, use_git: bool = True) -> Path:
     """Project root that owns the task database, even when running inside a git worktree.
 
     Agents work in worktrees under <main>/tmp/ (any depth); the tracker must always use the main
-    checkout. Order: $VIBE_TASKS_ROOT, git's common dir (works for any worktree location), the
+    checkout. Order: $TASKS_ROOT, git's common dir (works for any worktree location), the
     nearest ancestor named `tmp` that sits in a checkout with a `.git`, then `start` itself.
     """
     start = Path(start).resolve()
-    override = os.environ.get("VIBE_TASKS_ROOT")
+    override = os.environ.get("TASKS_ROOT")
     if override:
         return Path(override).resolve()
     if use_git:
@@ -42,7 +42,7 @@ def resolve_root(start: Path, use_git: bool = True) -> Path:
     return start
 
 
-ROOT = resolve_root(Path(__file__).resolve().parent.parent)
+ROOT = resolve_root(Path.cwd())
 DEFAULT_PATH = ROOT / "tasks" / "tasks.db"
 
 SCHEMA = """

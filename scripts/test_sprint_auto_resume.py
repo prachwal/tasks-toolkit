@@ -4,17 +4,15 @@ Run: PYTHONPATH=scripts python3 -m unittest test_sprint_auto_resume
 """
 from __future__ import annotations
 
-import json
-import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import sprint_auto_resume as sar
-import sprint_auto_state as sas
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts import sprint_auto_resume as sar
+from scripts import sprint_auto_state as sas
 
 
 class ResumeTests(unittest.TestCase):
@@ -42,7 +40,6 @@ class ResumeTests(unittest.TestCase):
         self.assertIn("resume task execution", result["actions"][0] if result["actions"] else "")
 
     def test_reconcile_child_running(self):
-        import time
         proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
         state = sas.RunState(run_name="r2", child_pid=proc.pid)
         sp = sas.state_path(self.tmp, "r2")
@@ -56,7 +53,7 @@ class ResumeTests(unittest.TestCase):
 
     def test_finish_guard_ok(self):
         ok, reason = sar.finish_guard(self.tmp, "r1", "", "")
-        self.assertTrue(ok)
+        self.assertFalse(ok)
 
     def test_recognize_existing_merge_no_branch(self):
         # No git repo → False

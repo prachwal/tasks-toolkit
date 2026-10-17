@@ -34,6 +34,8 @@ Issues = "https://github.com/prachwal/tasks-toolkit/issues"
 tasks = "scripts.tasks:main"
 tasks-init = "scripts.tasks_init:main"
 tasks-mcp = "scripts.tasks_mcp:main"
+tasks-run = "scripts.task_runner:main"
+tasks-sprint = "scripts.sprint_auto:main"
 
 [tool.setuptools]
 packages = ["scripts"]
@@ -66,4 +68,4 @@ markers = [
   "slow: marks tests as slow (subprocess-heavy)",
   "integration: marks tests as integration tests",
 ]
-addopts = "-n auto --ignore=scripts/test_agent_config.py --ignore=scripts/test_tasks_watch.py"
+addopts = "-n 2"
