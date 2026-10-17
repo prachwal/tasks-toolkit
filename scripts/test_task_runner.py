@@ -208,6 +208,24 @@ class RunnerTests(RepositoryCase):
         with self.assertRaisesRegex(runner.RunnerError, "runners.codex"):
             runner.runner_command({"runners": {}}, "codex")
 
+    def test_normalized_protected_file_is_rejected_before_commit(self):
+        self.config["protected_paths"] = ["./src/result.txt"]
+        self.save_config()
+        before = runner.git(self.root, "rev-parse", "HEAD")
+        report = self.execute()
+        self.assertFalse(report["accept"])
+        self.assertEqual(report["status"], "scope_violation")
+        self.assertIn("src/result.txt", report["scope_violations"])
+        self.assertEqual(runner.git(self.root, "rev-parse", "HEAD"), before)
+
+    def test_invalid_protected_configuration_stops_before_coder(self):
+        self.config["protected_paths"] = ["../private"]
+        self.save_config()
+        proc = self.run_cli("--runner", "local-worker")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("protected_paths", proc.stderr)
+        self.assertFalse((self.root / "src/result.txt").exists())
+
     def test_installed_entrypoint_uses_callers_project(self):
         # Run installed scripts from outside their source tree with no TASKS_ROOT.
         env = {k: v for k, v in os.environ.items() if k not in ("TASKS_ROOT", "PYTHONPATH")}

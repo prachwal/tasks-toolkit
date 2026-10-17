@@ -12,6 +12,7 @@ Exit codes: 0 ok, 1 usage/IO, 4 invalid plan. Only `apply` writes the tracker, a
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,8 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.runner_config import RunnerError, is_protected, protected_paths  # noqa: E402
+from scripts.tasks_init import resolve_root  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
+SCRIPTS_DIR = Path(__file__).resolve().parent
 SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SPEC_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 KEY = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -30,6 +32,11 @@ MAX_TASKS = 12
 
 class PlanError(Exception):
     """Raised for an unusable plan or model answer."""
+
+
+def project_root() -> Path:
+    """Resolve the caller's project at call time, using the tracker's root rules."""
+    return resolve_root(Path.cwd())
 
 
 def extract_plan(text: str) -> dict:
@@ -68,8 +75,9 @@ def validate_plan(plan: dict, lint: bool = True, specs_written: bool = False) ->
     """Return every violation of the flow rules (empty list = valid).
 
     With specs_written (apply time) the spec files must already exist; otherwise (plan time) they must not."""
+    root = project_root()
     try:
-        protected = protected_paths(ROOT)
+        protected = protected_paths(root)
     except RunnerError as exc:
         return [str(exc)]
     errors: list[str] = []
@@ -107,7 +115,7 @@ def validate_plan(plan: dict, lint: bool = True, specs_written: bool = False) ->
             errors.append(f"{label}: spec_name must match {SPEC_NAME.pattern}")
         elif name in seen_specs:
             errors.append(f"{label}: duplicate spec_name '{name}'")
-        elif (ROOT / "tmp" / "tasks" / f"{name}.md").exists() != specs_written:
+        elif (root / "tmp" / "tasks" / f"{name}.md").exists() != specs_written:
             errors.append(f"{label}: tmp/tasks/{name}.md " + ("is missing" if specs_written else "already exists; pick another spec_name"))
         if not isinstance(task.get("spec"), str) or not task["spec"].strip():
             errors.append(f"{label}: spec text required")
@@ -136,7 +144,7 @@ def _lint_specs(tasks: list[dict]) -> list[str]:
         for task in tasks:
             path = Path(tmp) / f"{task['spec_name']}.md"
             path.write_text(task["spec"].rstrip() + "\n", encoding="utf-8")
-            result = subprocess.run(["bash", str(ROOT / "scripts" / "spec-lint.sh"), str(path)],
+            result = subprocess.run(["bash", str(SCRIPTS_DIR / "spec-lint.sh"), str(path)],
                                     capture_output=True, text=True, check=False)
             if result.returncode != 0:
                 problems += [f"task '{task['key']}': {line}" for line in result.stderr.strip().splitlines()]
@@ -145,7 +153,7 @@ def _lint_specs(tasks: list[dict]) -> list[str]:
 
 def write_specs(plan: dict) -> list[Path]:
     """Write every task's spec to tmp/tasks/<spec_name>.md."""
-    out = ROOT / "tmp" / "tasks"
+    out = project_root() / "tmp" / "tasks"
     out.mkdir(parents=True, exist_ok=True)
     paths = []
     for task in plan["tasks"]:
@@ -167,8 +175,9 @@ def preview(plan: dict) -> str:
 
 
 def _tasks_py(*args: str) -> str:
-    result = subprocess.run([sys.executable, str(ROOT / "scripts" / "tasks.py"), *args], capture_output=True,
-                            text=True, check=False)
+    root = project_root()
+    result = subprocess.run([sys.executable, str(SCRIPTS_DIR / "tasks.py"), *args], capture_output=True,
+                            text=True, check=False, cwd=root, env={**os.environ, "TASKS_ROOT": str(root)})
     if result.returncode != 0:
         raise PlanError(f"tasks.py {args[0]} failed: {result.stderr.strip()}")
     return result.stdout
@@ -221,7 +230,7 @@ def main(argv: list[str]) -> int:
             return 4 if errors else 0
         if command == "specs":
             for path in write_specs(plan):
-                print(path.relative_to(ROOT))
+                print(path.relative_to(project_root()))
         elif command == "preview":
             print(preview(plan))
         elif command == "apply":

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 CONFIG_FILE = ".tasks-toolkit.json"
 RUNNER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
@@ -21,6 +21,19 @@ class RunnerError(Exception):
     """Runner configuration or an execution prerequisite is invalid."""
 
 
+def _normalize_protected_path(path: object) -> str:
+    """Normalize harmless dot/separator spelling and reject ambiguous or escaping paths."""
+    if not isinstance(path, str) or not path or path != path.strip():
+        raise RunnerError("protected_paths entries must be non-empty repo-relative paths")
+    if (PurePosixPath(path).is_absolute() or PureWindowsPath(path).drive or "\\" in path
+            or ".." in path.split("/") or any(ord(char) < 32 for char in path)):
+        raise RunnerError(f"protected_paths entry must be repo-relative without '..': {path!r}")
+    normalized = str(PurePosixPath(path))
+    if normalized == ".":
+        raise RunnerError("protected_paths entries must name a file or directory inside the project")
+    return normalized
+
+
 def protected_paths(root: Path) -> tuple[str, ...]:
     """Built-in protected paths plus `protected_paths` from the project config, if present."""
     path = root / CONFIG_FILE
@@ -30,12 +43,13 @@ def protected_paths(root: Path) -> tuple[str, ...]:
         if not isinstance(config, dict):
             raise RunnerError("runner config must be an object")
         extra = config.get("protected_paths", [])
-    if not isinstance(extra, list) or not all(isinstance(p, str) and p.strip("/") for p in extra):
+    if not isinstance(extra, list):
         raise RunnerError("protected_paths must be a list of repo-relative paths")
-    return BUILTIN_PROTECTED + tuple(p.strip("/") for p in extra)
+    return BUILTIN_PROTECTED + tuple(_normalize_protected_path(p) for p in extra)
 
 
 def is_protected(path: str, protected: tuple[str, ...]) -> bool:
+    path = str(PurePosixPath(path))
     return any(path == p or path.startswith(p + "/") for p in protected)
 
 
