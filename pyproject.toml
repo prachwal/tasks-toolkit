@@ -1,8 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "vibe-emulator-scripts"
-version = "1.0.0"
-description = "Python scripts for vibe-emulator task tracking and automation"
+name = "tasks-toolkit"
+version = "0.1.0"
+description = "Task tracker toolkit: CLI + MCP server for sprint/task/subtask management, delegation helpers."
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
+authors = [{ name = "prachwal" }]
+keywords = ["mcp", "task-tracker", "cli", "sprints"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/prachwal/tasks-toolkit"
+Repository = "https://github.com/prachwal/tasks-toolkit"
+Issues = "https://github.com/prachwal/tasks-toolkit/issues"
+
+[project.scripts]
+tasks = "scripts.tasks:main"
+tasks-init = "scripts.tasks_init:main"
+tasks-mcp = "scripts.tasks_mcp:main"
+
+[tool.setuptools]
+packages = ["scripts"]
+
+[tool.setuptools.package-data]
+scripts = ["*.sh"]
 
 [tool.ruff]
 target-version = "py310"
@@ -26,7 +61,7 @@ files = ["scripts"]
 [tool.pytest.ini_options]
 testpaths = ["scripts"]
 markers = [
-    "slow: marks tests as slow (subprocess-heavy)",
-    "integration: marks tests as integration tests",
+  "slow: marks tests as slow (subprocess-heavy)",
+  "integration: marks tests as integration tests",
 ]
 addopts = "-n auto"

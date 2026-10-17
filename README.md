@@ -13,7 +13,35 @@ plus helpers used by the VibeEmulator project.
 - `pyproject.toml` — ruff/mypy/pytest configuration.
 - `knowledge/`, `agents/` — design notes and tracker docs.
 
-## Quick start
+## Installation
+
+### From PyPI (recommended)
+
+```bash
+pipx install tasks-toolkit
+# or: uv tool install tasks-toolkit
+tasks-init
+tasks overview
+```
+
+### From source
+
+```bash
+git clone https://github.com/prachwal/tasks-toolkit.git
+cd tasks-toolkit
+python -m pip install -e .
+tasks-init
+tasks overview
+```
+
+### Docker
+
+```bash
+docker build -t tasks-toolkit .
+docker run --rm -i -v tasks-data:/data tasks-toolkit
+```
+
+## Quick start (from source)
 
 ```bash
 python3 scripts/tasks_init.py          # create tasks/tasks.db
