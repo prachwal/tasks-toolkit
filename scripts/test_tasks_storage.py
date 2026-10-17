@@ -8,6 +8,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import tasks_storage as ts
 
@@ -15,21 +16,22 @@ from scripts import tasks_storage as ts
 class StorageTests(unittest.TestCase):
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
-        os.environ["TASKS_TESTING"] = "1"
-        ts.DATA_FILE = self.tmp / "tasks" / "tasks.db"
-        ts.VIEW_DIR = self.tmp / "tasks"
-        ts.README_FILE = ts.VIEW_DIR / "README.md"
-        ts.VIEW_FILE = ts.README_FILE
-        ts.LOCK_FILE = self.tmp / "tasks" / ".lock"
-        ts.SNAPSHOT_FILE = self.tmp / "tasks" / "tasks.snapshot.json"
-        ts.RECOVERY_DIR = self.tmp / "tasks" / "removed"
-        ts.BACKUP_DIR = self.tmp / "backup.d"
-        (self.tmp / "tasks").mkdir(parents=True, exist_ok=True)
-
-    def tearDown(self):
-        import shutil
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.tmp = Path(temporary.name)
+        env = mock.patch.dict(os.environ, {"TASKS_TESTING": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        view = self.tmp / "tasks"
+        paths = mock.patch.multiple(
+            ts, DATA_FILE=view / "tasks.db", VIEW_DIR=view,
+            README_FILE=view / "README.md", VIEW_FILE=view / "README.md",
+            LOCK_FILE=view / ".lock", SNAPSHOT_FILE=view / "tasks.snapshot.json",
+            RECOVERY_DIR=view / "removed", BACKUP_DIR=self.tmp / "backup.d",
+        )
+        paths.start()
+        self.addCleanup(paths.stop)
+        view.mkdir()
 
     def test_connect_creates_db(self):
         conn = ts.connect()
@@ -54,12 +56,14 @@ class StorageTests(unittest.TestCase):
         ts._write_atomic(path, "hello")
         self.assertEqual(path.read_text(), "hello")
 
-    def test_testing_guard_blocks_real_path(self):
-        import os
-        os.environ["TASKS_TESTING"] = "1"
-        path = Path("/home/prachwal/src/emulators/vibe-emulator-001/tasks/tasks.snapshot.json")
-        with self.assertRaises(ts.TaskError):
-            ts._testing_guard(path)
+    def test_testing_guard_blocks_paths_outside_fixture_temp_root(self):
+        allowed = self.tmp / "allowed"
+        outside = self.tmp / "outside" / "tasks.snapshot.json"
+        with mock.patch.object(tempfile, "gettempdir", return_value=str(allowed)):
+            ts._testing_guard(allowed / "tasks.snapshot.json")
+            with self.assertRaises(ts.TaskError):
+                ts._testing_guard(outside)
+        self.assertFalse(outside.exists())
 
 
 if __name__ == "__main__":

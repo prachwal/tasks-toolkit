@@ -59,6 +59,12 @@ class RunStatsTests(unittest.TestCase):
         out = run(self.dir)
         self.assertEqual(out.returncode, 0)
 
+    def test_legacy_status_supports_arbitrary_runner_names(self):
+        self.status("private", "[01:30] done - private-agent-42 exit 0, verification PASSED")
+        data = json.loads(run(self.dir, "--json").stdout)
+        self.assertEqual(data["private-agent-42"]["verified"], 1)
+        self.assertEqual(data["private-agent-42"]["median_s"], 90)
+
 
 if __name__ == "__main__":
     unittest.main()

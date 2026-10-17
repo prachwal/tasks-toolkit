@@ -19,12 +19,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.runner_config import CONFIG_FILE, RunnerError, load_config, select_runner
+
 FORBIDDEN_ENV = {
     "SPEC_LINT": "off",
     "ACCEPT_CHECKS_CMD": None,  # any non-empty value is forbidden
-    "JUNIE_VERIFY_CMD": None,
-    "KILO_VERIFY_CMD": None,
-    "CODEX_VERIFY_CMD": None,
 }
 
 GENERATED_PATHS = {
@@ -33,7 +33,7 @@ GENERATED_PATHS = {
 }
 
 SAFE_DEFAULTS = {
-    "runner": "codex",
+    "runner": None,
     "serial": True,
     "fallback": "none",
     "retries": 0,
@@ -60,7 +60,8 @@ def _git(root: Path, *args: str) -> str:
 def _check_env() -> list[str]:
     """Return list of forbidden-env blockers."""
     blockers: list[str] = []
-    for key, forbidden_val in FORBIDDEN_ENV.items():
+    forbidden = FORBIDDEN_ENV | {key: None for key in os.environ if key.endswith("_VERIFY_CMD")}
+    for key, forbidden_val in forbidden.items():
         val = os.environ.get(key, "")
         if not val:
             continue
@@ -160,6 +161,14 @@ def collect_preflight(root: Path, request: dict, answers: dict | None = None) ->
     delegated_defaults: list[dict] = []
     blockers: list[str] = []
     approval_scope: dict = {}
+    config: dict | None = None
+    configured_default = None
+    if (root / CONFIG_FILE).is_file():
+        try:
+            config = load_config(root)
+            configured_default = config.get("default_runner")
+        except (RunnerError, ValueError, OSError) as exc:
+            blockers.append(f"runner configuration: {exc}")
 
     # --- environment checks ---
     blockers.extend(_check_env())
@@ -205,7 +214,7 @@ def collect_preflight(root: Path, request: dict, answers: dict | None = None) ->
     decision_map = {d.get("id"): d for d in decisions if isinstance(d, dict)}
 
     policy_items = [
-        ("runner", "Which runner to use?", "codex"),
+        ("runner", "Which configured runner to use?", configured_default),
         ("serial", "Run tasks serially?", True),
         ("fallback", "Fallback runner on failure?", "none"),
         ("retries", "Max retries per task?", 0),
@@ -215,41 +224,41 @@ def collect_preflight(root: Path, request: dict, answers: dict | None = None) ->
         ("clean", "Allow clean?", False),
     ]
 
+    resolved_policy = dict(answers.get("policy", {}))
     for pid, prompt, default in policy_items:
-        d = decision_map.get(pid, {})
-        val, delegated = _resolve_delegated(d)
-        if val is None and not delegated:
-            # check if explicitly answered
-            if pid in answers.get("policy", {}):
-                val = answers["policy"][pid]
+        decision = decision_map.get(pid, {})
+        val, delegated = _resolve_delegated(decision)
+        if val is None:
+            if pid in resolved_policy:
+                val = resolved_policy[pid]
                 delegated = False
-            else:
-                safe = d.get("safe_default", default)
-                if d.get("delegated"):
-                    delegated_defaults.append({"id": pid, "value": safe, "rationale": d.get("rationale", "")})
-                    val = safe
-                    delegated = True
-                else:
-                    questions.append({
-                        "id": pid,
-                        "prompt": prompt,
-                        "answer": None,
-                        "delegated": False,
-                        "safe_default": default,
-                        "rationale": "",
-                    })
-                    continue
+            elif pid == "runner" and configured_default is not None:
+                val = configured_default
+            elif decision.get("delegated"):
+                val = decision.get("safe_default", default)
+                delegated = val is not None
+        if val is None:
+            questions.append({"id": pid, "prompt": prompt, "answer": None,
+                              "delegated": False, "safe_default": default, "rationale": ""})
+            continue
+        resolved_policy[pid] = val
         if delegated:
-            delegated_defaults.append({"id": pid, "value": val, "rationale": d.get("rationale", "")})
+            delegated_defaults.append({"id": pid, "value": val, "rationale": decision.get("rationale", "")})
 
-    # --- build approval scope ---
-    policy = answers.get("policy", {})
+    if config is not None and resolved_policy.get("runner") is not None:
+        try:
+            select_runner(config, resolved_policy["runner"])
+        except RunnerError as exc:
+            blockers.append(str(exc))
+
+    # Use the resolved choices for approval, preparation and execution alike.
+    policy = resolved_policy
     approval_scope = {
         "goal": goal,
         "goal_reviewed": goal_reviewed,
         "allowed_scopes": allowed_scopes,
         "policy": policy,
-        "runner": policy.get("runner", "codex"),
+        "runner": policy.get("runner"),
         "serial": policy.get("serial", True),
         "fallback": policy.get("fallback", "none"),
         "push": policy.get("push", False),

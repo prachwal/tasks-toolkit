@@ -1153,7 +1153,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("parent", help="sprint id (1) or task id (1.2)")
     p.add_argument("title")
     p.add_argument("-d", "--desc", help="description / acceptance criteria")
-    p.add_argument("-a", "--assignee", help="who does it, e.g. junie, kilo, claude")
+    p.add_argument("-a", "--assignee", help="person or runner responsible for the task")
     p.add_argument("--after", help="comma separated ids that must be done first")
     p.set_defaults(func=cmd_add)
 

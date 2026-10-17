@@ -11,13 +11,13 @@ Usage: scripts/run_summary.py <outfile> <key=value> [<key=value> ...]
 
 Keys:
     name, runner, model, task_id, patch    str (required)
-    agent                                  str (required for runner=kilo only)
+    agent                                  str (optional, for any runner)
     started, finished                      int, epoch seconds (required)
     agent_exit, verify_exit                int (required)
     files_changed                          int (required)
     verdict                                verified|verify_failed|agent_failed
 
-duration_s is derived as finished - started. Unknown keys, a wrong runner or verdict, or
+duration_s is derived as finished - started. Unknown keys, an invalid runner name or verdict, or
 a missing field are errors and nothing is written. Output is deterministic (sorted keys,
 2-space indent, trailing newline).
 """
@@ -25,11 +25,14 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.runner_config import valid_runner_name
 
 STR_FIELDS = ("name", "runner", "model", "agent", "task_id", "patch", "verdict")
 INT_FIELDS = ("started", "finished", "agent_exit", "verify_exit", "files_changed")
-RUNNERS = ("junie", "kilo", "codex")
 VERDICTS = ("verified", "verify_failed", "agent_failed")
 
 
@@ -63,19 +66,12 @@ def main(argv: list[str]) -> int:
         print(f"error: missing fields: {', '.join(missing)}", file=sys.stderr)
         return 2
 
-    if data["runner"] not in RUNNERS:
-        print(f"error: runner must be one of {', '.join(RUNNERS)}, got {data['runner']!r}", file=sys.stderr)
+    if not valid_runner_name(data["runner"]):
+        print("error: runner must be a name containing letters, digits, underscores or hyphens; 'none' is reserved", file=sys.stderr)
         return 2
     if data["verdict"] not in VERDICTS:
         print(f"error: verdict must be one of {', '.join(VERDICTS)}, got {data['verdict']!r}", file=sys.stderr)
         return 2
-    if data["runner"] == "kilo" and "agent" not in data:
-        print("error: field 'agent' is required for runner=kilo", file=sys.stderr)
-        return 2
-    if data["runner"] == "junie" and "agent" in data:
-        print("error: field 'agent' is only allowed for runner=kilo", file=sys.stderr)
-        return 2
-
     duration = int(data["finished"]) - int(data["started"])
     if duration < 0:
         print("error: finished is before started", file=sys.stderr)

@@ -61,7 +61,7 @@ class TestCollectPreflight(unittest.TestCase):
             del os.environ["ACCEPT_CHECKS_CMD"]
 
     def test_forbidden_env_verify_cmds(self):
-        for var in ("JUNIE_VERIFY_CMD", "KILO_VERIFY_CMD", "CODEX_VERIFY_CMD"):
+        for var in ("JUNIE_VERIFY_CMD", "KILO_VERIFY_CMD", "CODEX_VERIFY_CMD", "PRIVATE_AGENT_VERIFY_CMD"):
             os.environ[var] = "true"
             try:
                 result = sap.collect_preflight(self.root, {"goal": "g"}, {})
@@ -89,6 +89,7 @@ class TestCollectPreflight(unittest.TestCase):
         }
         result = sap.collect_preflight(self.root, {"goal": "g"}, answers)
         self.assertTrue(any(d["id"] == "runner" for d in result["delegated_defaults"]))
+        self.assertEqual(result["approval_scope"]["runner"], "junie")
 
     def test_missing_policy_returns_questions(self):
         result = sap.collect_preflight(self.root, {"goal": "g"}, {

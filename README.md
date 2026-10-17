@@ -52,16 +52,96 @@ export TASKS_ROOT=/path/to/data
 python3 scripts/tasks.py overview
 ```
 
-## MCP (OpenCode)
+## MCP clients
 
-```jsonc
-"tasks": {
-  "type": "local",
-  "command": ["python3", "{env:HOME}/src/tasks-toolkit/scripts/tasks_mcp.py"],
-  "cwd": "{env:HOME}/src/tasks-toolkit",
-  "environment": { "TASKS_ROOT": "{env:HOME}/src/tasks-toolkit" }
+The `tasks-mcp` command runs the same stdio server for every client. Set `TASKS_ROOT`
+to the absolute path of the project whose tasks you want to manage. It points to
+the project, not to the toolkit installation. An installed server needs no copy of
+this source repository. Use an absolute executable path if the client cannot find
+`tasks-mcp` on its PATH; `command -v tasks-mcp` shows it on Unix.
+
+### Claude Desktop
+
+Open **Settings → Developer → Edit Config**, merge this entry into
+`claude_desktop_config.json`, and restart the app:
+
+```json
+{
+  "mcpServers": {
+    "tasks": {
+      "command": "/absolute/path/to/tasks-mcp",
+      "args": [],
+      "env": {"TASKS_ROOT": "/absolute/path/to/your-project"}
+    }
+  }
 }
 ```
+
+See the [official local-server setup guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers)
+for configuration locations and troubleshooting. The toolkit currently uses POSIX
+file locking (`fcntl`); run the server on macOS or Linux. The Windows Desktop app
+needs a launcher into a Linux environment such as WSL, rather than a native Windows
+Python process.
+
+### Claude Code
+
+From your project directory, register a project-scoped stdio server:
+
+```bash
+claude mcp add --transport stdio --scope project \
+  --env TASKS_ROOT="$(pwd)" tasks -- /absolute/path/to/tasks-mcp
+claude mcp list
+```
+
+Claude Code saves project-scoped servers to `.mcp.json`; see its
+[official MCP documentation](https://code.claude.com/docs/en/mcp).
+
+### VS Code / GitHub Copilot
+
+Add a server to `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "tasks": {
+      "type": "stdio",
+      "command": "/absolute/path/to/tasks-mcp",
+      "args": [],
+      "env": {"TASKS_ROOT": "${workspaceFolder}"}
+    }
+  }
+}
+```
+
+See [VS Code's MCP configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration).
+
+### OpenCode
+
+Add this entry to `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "tasks": {
+      "type": "local",
+      "command": ["/absolute/path/to/tasks-mcp"],
+      "enabled": true,
+      "environment": {"TASKS_ROOT": "/absolute/path/to/your-project"}
+    }
+  }
+}
+```
+
+See the [OpenCode MCP documentation](https://opencode.ai/docs/mcp-servers/).
+
+### Other stdio clients and source installs
+
+Configure any MCP client to launch `tasks-mcp`, use stdio transport and pass
+`TASKS_ROOT` in the server environment. Clients use different JSON keys; adapt one
+of the examples above to the client's schema. To run from a source checkout,
+replace the executable with `python3` and pass
+`/absolute/path/to/tasks-toolkit/scripts/tasks_mcp.py` as its first argument
+(or use that two-element array for OpenCode's `command`).
 
 ## Verified task and sprint execution
 
@@ -70,12 +150,32 @@ Copy `.tasks-toolkit.example.json` to `.tasks-toolkit.json`, choose the checks f
 no shell interpolation is performed. Every configured check must pass. Keep
 `tmp/` and generated `tasks/` files in `.gitignore`, as in this repository.
 
-The default coder uses [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive):
-`codex exec --sandbox workspace-write -`. Install and authenticate its CLI separately.
-To use Junie or Kilo, set `runners.junie` or `runners.kilo` to the argument array for
-your local adapter. Adapters receive the spec on stdin, edit files in their current
-working directory, leave changes uncommitted, and return nonzero on failure.
-The same `runners.codex` setting can select a custom Codex adapter.
+Runner names and commands are defined entirely in `.tasks-toolkit.json`:
+
+```json
+{
+  "default_runner": "coder",
+  "runners": {
+    "coder": ["python3", "tools/coder_adapter.py"],
+    "backup-coder": ["/absolute/path/to/another-adapter"]
+  },
+  "checks": [["python3", "-m", "pytest", "-q"]],
+  "timeout": 120
+}
+```
+
+Replace these sample adapter commands with your own. Adapters receive the spec on
+stdin, edit files in their current working directory, leave changes uncommitted,
+and return nonzero on failure. There are no built-in providers or model choices.
+`--runner NAME` selects any registered adapter; otherwise `default_runner` is used.
+If no default is configured, select a runner explicitly. `--fallback NAME` uses
+the same registry; `none` is reserved to disable fallback. Reports and statistics
+accept any runner name containing letters, digits, underscores and hyphens.
+
+When upgrading from 0.1.4, register the command you previously relied on explicitly:
+implicit provider commands and the implicit default have been removed. Existing
+checkpoint and report runner names remain valid when registered in the configuration.
+Changing configuration still invalidates a resume checkpoint's approval fingerprint.
 
 Installed commands are `tasks-run` and `tasks-sprint`; from source, the corresponding
 wrappers are `scripts/run-task.sh` and `scripts/sprint-auto.sh`.
@@ -84,7 +184,7 @@ Run one task in a clean working tree, with an explicit allowed scope:
 
 ```bash
 tasks-run result \
-  --file tmp/tasks/result.md --scope src/ --runner codex
+  --file tmp/tasks/result.md --scope src/ --runner coder
 ```
 
 Alternatively, `--task-id 1.1` reads scope links from the tracker. The runner checks
@@ -98,14 +198,15 @@ that left the working tree clean.
 For a complete sprint, supply a plan containing `sprint` (`slug`, `title`, `goal`)
 and `tasks` (`key`, `title`, `scope`, `spec_name`, `spec`, `depends_on`). Specs must
 pass `scripts/spec-lint.sh`; dependencies reference earlier task keys. An answers
-file binds the reviewed goal, allowed paths and execution policy:
+file binds the reviewed goal, allowed paths and execution policy. `policy.runner`
+overrides the configured default; delegated decisions use the same registry:
 
 ```json
 {
   "goal_reviewed": true,
   "allowed_scopes": ["src/"],
   "policy": {
-    "runner": "codex", "serial": true, "fallback": "none", "retries": 0,
+    "runner": "coder", "serial": true, "fallback": "none", "retries": 0,
     "push": false, "accept_flags": false, "reset": false, "clean": false
   }
 }
@@ -171,6 +272,7 @@ builds to pass. VS Code tracker commands are provided in `.vscode/tasks.json`.
 | `sprint_auto_resume.py` | Resume and finish owned sprints. |
 | `apply-plan.sh` | Import a validated sprint plan (`tmp/plans/<name>.json`) into the tracker. |
 | `run-task.sh` / `task_runner.py` | Run configured coders and verify actual changes before committing. |
+| `runner_config.py` | Provider-independent runner registry, default selection and configuration validation. |
 | `task-report.sh` | Report delegation progress to the tracker. |
 | `run_summary.py` | Write a run summary JSON for finished runs. |
 | `run_stats.py` | Delivery-speed statistics for delegation runners. |

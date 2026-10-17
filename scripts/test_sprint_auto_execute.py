@@ -16,7 +16,7 @@ class ExecuteTests(RepositoryCase):
         self.assertTrue(execute.check_scope_conformity(["src/a.py"], ["src/"])[0])
 
     def test_declared_success_does_not_bypass_failed_checks(self):
-        checkpoint = state.RunState(run_name="test", runner="codex")
+        checkpoint = state.RunState(run_name="test", runner="local-worker")
         self.config["checks"] = [["false"]]
         task = {"key": "result", "task_id": "1.1", "spec_name": "result", "scope": ["src/"],
                 "checks_green": True, "red_flags": 0, "tracker_done": True}

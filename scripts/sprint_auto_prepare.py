@@ -17,8 +17,6 @@ from scripts import tasks  # noqa: E402
 from scripts import tasks_plan_import as tpi
 from scripts.task_runner import scope_conformity as check_scope_conformity  # noqa: E402
 
-RUNNER_DEFAULT = "codex"
-
 
 def _run_git(root: Path, *args: str) -> str:
     try:
@@ -80,7 +78,7 @@ def _prepare_run(root: Path, request: dict, answers: dict, run_name: str,
         state = sas.bind_state(
             root, git_common, run_name, request.get("goal", ""),
             answers_fp, answers.get("allowed_scopes", []),
-            main_sha, answers.get("policy", {}).get("runner", RUNNER_DEFAULT), "", 120,
+            main_sha, preflight2["approval_scope"]["runner"], "", 120,
         )
         state.plan_fingerprint = ""
         result["state"] = state.to_dict()

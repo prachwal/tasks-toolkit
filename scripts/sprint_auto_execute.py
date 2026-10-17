@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts import sprint_auto_state as sas
 from scripts import task_runner as runner
 
-RUNNER_DEFAULT = "codex"
 check_scope_conformity = runner.scope_conformity
 
 

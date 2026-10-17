@@ -29,7 +29,7 @@ class RunState:
     answers_fingerprint: str = ""
     allowed_scopes: list = field(default_factory=list)
     initial_main_sha: str = ""
-    runner: str = "codex"
+    runner: str = ""
     model: str = ""
     timeout: int = 120
     plan_fingerprint: str = ""
