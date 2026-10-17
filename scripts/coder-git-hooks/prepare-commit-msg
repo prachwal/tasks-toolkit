@@ -1,0 +1,3 @@
+#!/bin/sh
+printf '%s\n' 'Task coder agents may not commit; the parent runner owns the guarded commit.' >&2
+exit 1

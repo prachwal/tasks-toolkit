@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Task tracker data (local, not committed)
+tasks/tasks.db
+tasks/.lock
+tasks/README.md
+tasks/sprint-*.md
+tasks/removed/
+tasks/tasks.snapshot.json
+
+# Temp / scratch
+tmp/
+*.log
